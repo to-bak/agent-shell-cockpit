@@ -23,11 +23,6 @@
   :type 'string
   :group 'agent-shell-cockpit)
 
-(defcustom agent-shell-cockpit-default-prompt-filename "prompt.org"
-  "Filename used for the initial prompt in a new workspace."
-  :type 'string
-  :group 'agent-shell-cockpit)
-
 (defcustom agent-shell-cockpit-repositories-directory-name "repositories"
   "Directory name used for Git worktrees inside each workspace."
   :type 'string
@@ -83,8 +78,9 @@ When nil, use a .archive directory below
                (not (string-empty-p (map-elt record key))))
     (error "Missing or invalid %s" key)))
 
-(defun agent-shell-cockpit-store--prompt-title (root)
-  "Return the first Org prompt title below ROOT, or its directory name."
+(defun agent-shell-cockpit-store--prompt-title (root &optional fallback)
+  "Return the first Org prompt title below ROOT, or FALLBACK.
+When FALLBACK is nil, use ROOT's directory name."
   (let* ((directory (expand-file-name
                      agent-shell-cockpit-prompts-directory-name root))
          (files (when (file-directory-p directory)
@@ -99,7 +95,17 @@ When nil, use a .archive directory below
                     "^#\\+TITLE:[[:space:]]*\\(.+\\)$" nil t)
                (string-trim (match-string 1)))))
          files)
+        fallback
         (file-name-nondirectory (directory-file-name root)))))
+
+(defun agent-shell-cockpit-store--archive-directory-name (root)
+  "Return the original workspace name represented by archived ROOT."
+  (let ((name (file-name-nondirectory (directory-file-name root))))
+    (if (string-match
+         "\\`\\(.+\\)--[[:xdigit:]]\\{8\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{12\\}\\'"
+         name)
+        (match-string 1 name)
+      name)))
 
 (defun agent-shell-cockpit-store--archived-root-p (root)
   "Return non-nil when ROOT is below the configured archive directory."
@@ -130,16 +136,23 @@ When nil, use a .archive directory below
   (mapc #'agent-shell-cockpit-store--validate-session
         (map-elt record 'sessions))
   (setq root (file-name-as-directory (expand-file-name root)))
-  (agent-shell-cockpit-store-set record 'root root)
-  (agent-shell-cockpit-store-set record 'kind 'workspace)
-  (agent-shell-cockpit-store-set
-   record 'name (file-name-nondirectory (directory-file-name root)))
-  (agent-shell-cockpit-store-set
-   record 'title (agent-shell-cockpit-store--prompt-title root))
-  (agent-shell-cockpit-store-set
-   record 'state (if (agent-shell-cockpit-store--archived-root-p root)
-                     "archived" "active"))
-  record)
+  (let* ((archived (agent-shell-cockpit-store--archived-root-p root))
+         (stored-name (map-elt record 'name))
+         (name
+          (if archived
+              (if (and (stringp stored-name)
+                       (not (string-empty-p stored-name)))
+                  stored-name
+                (agent-shell-cockpit-store--archive-directory-name root))
+            (file-name-nondirectory (directory-file-name root)))))
+    (agent-shell-cockpit-store-set record 'root root)
+    (agent-shell-cockpit-store-set record 'kind 'workspace)
+    (agent-shell-cockpit-store-set record 'name name)
+    (agent-shell-cockpit-store-set
+     record 'title (agent-shell-cockpit-store--prompt-title root name))
+    (agent-shell-cockpit-store-set
+     record 'state (if archived "archived" "active"))
+    record))
 
 (defun agent-shell-cockpit-store-read (root)
   "Read and validate workspace metadata below ROOT.
@@ -190,19 +203,23 @@ workspace records are included so the UI can report them."
 
 (defun agent-shell-cockpit-store--serializable-record (record)
   "Return the deliberately small persistent subset of RECORD."
-  `((schemaVersion . ,agent-shell-cockpit-store-schema-version)
-    (sessions
-     . ,(vconcat
-         (mapcar
-          (lambda (session)
-            (let ((copy `((agentId . ,(map-elt session 'agentId))
-                          (sessionId . ,(map-elt session 'sessionId)))))
-              (when (map-elt session 'title)
-                (setq copy
-                      (append copy
-                              `((title . ,(map-elt session 'title))))))
-              copy))
-          (map-elt record 'sessions))))))
+  (let ((serialized
+         `((schemaVersion . ,agent-shell-cockpit-store-schema-version)
+           (sessions
+            . ,(vconcat
+                (mapcar
+                 (lambda (session)
+                   (let ((copy `((agentId . ,(map-elt session 'agentId))
+                                 (sessionId . ,(map-elt session 'sessionId)))))
+                     (when (map-elt session 'title)
+                       (setq copy
+                             (append copy
+                                     `((title . ,(map-elt session 'title))))))
+                     copy))
+                 (map-elt record 'sessions)))))))
+    (if (stringp (map-elt record 'name))
+        (append serialized `((name . ,(map-elt record 'name))))
+      serialized)))
 
 (defun agent-shell-cockpit-store-write (record)
   "Atomically persist workspace RECORD and return it."

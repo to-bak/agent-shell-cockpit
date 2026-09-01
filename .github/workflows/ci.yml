@@ -15,17 +15,19 @@ jobs:
       - uses: purcell/setup-emacs@master
         with:
           version: ${{ matrix.emacs_version }}
-      - name: Run isolated tests
-        run: make test
-      - name: Install compile and lint dependencies
+      - name: Install test, compile, and lint dependencies
         run: |
           emacs -Q --batch \
             --eval "(require 'package)" \
             --eval "(add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\") t)" \
             --eval "(package-refresh-contents)" \
             --eval "(package-install 'agent-shell)" \
+            --eval "(package-install 'magit-section)" \
+            --eval "(package-install 'transient)" \
             --eval "(package-install 'package-lint)"
+      - name: Run isolated tests
+        run: make test STRAIGHT_BUILD=~/.emacs.d/elpa
       - name: Compile and check documentation
-        run: make compile checkdoc STRAIGHT_BUILD=/nonexistent
+        run: make compile checkdoc STRAIGHT_BUILD=~/.emacs.d/elpa
       - name: Package lint
-        run: make lint STRAIGHT_BUILD=/nonexistent
+        run: make lint STRAIGHT_BUILD=~/.emacs.d/elpa

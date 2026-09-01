@@ -1,7 +1,8 @@
 EMACS ?= emacs
 EMACS_BATCH = $(EMACS) -Q --batch --eval '(setq load-prefer-newer t)'
 STRAIGHT_BUILD ?= $(HOME)/.emacs.d/straight/build
-DEPENDENCY_LOAD_PATH = $(foreach dir,$(wildcard $(STRAIGHT_BUILD)/*),-L $(dir))
+DEPENDENCY_DIRS = $(filter-out $(STRAIGHT_BUILD)/agent-shell-cockpit,$(wildcard $(STRAIGHT_BUILD)/*))
+DEPENDENCY_LOAD_PATH = $(foreach dir,$(DEPENDENCY_DIRS),-L $(dir))
 PACKAGE_FILES = $(wildcard agent-shell-cockpit*.el)
 
 .PHONY: all check test compile checkdoc lint clean
@@ -11,7 +12,7 @@ all: check
 check: test compile checkdoc
 
 test:
-	$(EMACS_BATCH) -L . -L test \
+	$(EMACS_BATCH) $(DEPENDENCY_LOAD_PATH) -L . -L test \
 	  -l agent-shell-cockpit-test-helper \
 	  -l agent-shell-cockpit-store-test \
 	  -l agent-shell-cockpit-git-test \

@@ -13,6 +13,8 @@ commands and interface may still change before a MELPA submission.
 
 - Emacs 29.1 or newer
 - =agent-shell= 0.71.3 or newer
+- =magit-section= 4.0 or newer
+- =transient= 0.7 or newer
 - Git for repository worktree operations
 
 * Installation
@@ -29,63 +31,84 @@ Add the checkout to =load-path= and load the package:
 * Workflow
 
 1. Open =M-x agent-shell-cockpit=.
-2. Press =C-c C-n= and enter a directory name.  Cockpit creates a =prompts/=
-   directory containing an initial =prompt.org=; no separate title or ticket
-   questions are asked.
-3. Open the workspace and press =C-c C-a= to attach one or more local
-   repositories as Git worktrees.  Choose a new branch, existing branch, or
-   detached checkout.  New branches prompt for their start point using local
-   branches, remote branches, and tags, defaulting to main/current branch.
-4. Press =C-c C-s= for the configured default agent or =C-c C-c= to choose an
-   agent.  The agent starts at the aggregate workspace root.
+2. Press =?= to open the dashboard dispatcher, then =w= to create a workspace.
+   Cockpit creates an empty =prompts/= directory; users create and name prompt
+   files themselves with =e=.
+3. Open the workspace, press =?=, then =+= to attach a local repository as a
+   Git worktree.  Choose a new branch, existing branch, or detached checkout.
+   New branches prompt for their start point using local branches, remote
+   branches, and tags, defaulting to main/current branch.
+4. Press =s= for the default agent or =S= to choose one.  The agent starts at
+   the aggregate workspace root.
 5. Reopen recorded sessions from the workspace detail view.  A
-   =[HISTORY]= row can be resumed with =RET= or =C-c C-r=; Cockpit starts the
+   =[HISTORY]= row can be resumed with =RET=; Cockpit starts the
    recorded agent with its stored ACP session ID.
-6. Stop live agents and press =C-c C-x= to archive.  Cockpit refuses to archive
-   dirty worktrees, removes clean worktrees without deleting their branches,
-   and moves the remaining workspace record into =.archive=.
+6. Stop live agents and press =A= to archive.  Cockpit refuses to archive dirty
+   worktrees, removes clean worktrees without deleting their branches, and
+   moves the remaining workspace record into =.archive=.
+7. Press =l l= from the dashboard to browse archived workspaces in a separate
+   history buffer.  =RET= opens an archive directory and =D= permanently
+   deletes the selected archive after confirmation.
 
-Agent shells started elsewhere appear under *Unassigned agents*.  Press
-=C-c C-a= to attach one whose working directory is already inside a cockpit
-workspace.
+Agent shells started elsewhere appear as unassigned in *Live agents*.  Select
+one and press =a= to attach it when its working directory is already inside a
+Cockpit workspace.
 
-In the main dashboard, =C-j= and =C-k= move between rows and preview them on
-the right.  Workspace rows preview the complete workspace detail view; live
-agent rows preview the agent session buffer itself.
-Press =?= in either Cockpit view for all commands available in that context.
+Open a live agent with =RET=.  In Evil normal state, =q= returns to the exact
+Cockpit buffer that opened it; =C-c C-b= provides the same command without
+Evil.  Expanding a live agent row with =TAB= shows a bounded, automatically
+refreshed tail of its real agent buffer, providing a quick preview without
+leaving Cockpit.
+
+Cockpit views are real Magit Section buffers.  =TAB= expands or collapses rows
+that have useful detail, =n=/=p= move between sections, and =RET= performs the
+primary action.  Dashboard group and workspace rows are deliberately flat and
+cannot be collapsed; live agents are expandable because they provide a useful
+output preview.  Cockpit disables Magit's inherited section-cycling shortcuts,
+so visibility only changes for the section explicitly toggled with =TAB=.
+Navigation never opens or updates a
+side preview.  Expanding a prompt with =TAB= inserts its complete file contents
+inline with a shaded preview face.  Repository rows expand to useful Git and
+path details; historical sessions remain flat because Cockpit has no richer
+preview to show.  Live agent state is rendered beside its title as
+colored text such as =● ready= or =● attention=, separate from section headings.
+The usual Magit level keys (=1= through =4= and their =M-= variants) work too.
+Press =?= at any time for a grouped Transient showing all available commands;
+frequent commands also have the same mnemonic keys directly in the view.  Use
+=b= to return from a workspace.
 
 * Storage
 
 #+begin_example
 ~/.workspaces/example/
 ├── prompts/
-│   ├── prompt.org
 │   └── review.org
 ├── .agent-shell-cockpit/workspace.json
 └── repositories/
 #+end_example
 
 Files below =prompts/= belong to the user; add as many prompt files as the
-workspace needs.  =workspace.json= belongs to cockpit and contains only the
-schema version plus resumable ACP session references (agent ID, session ID, and
-an optional display title).  It does not duplicate transcripts maintained by
-the agent.  Workspace name, title, active/archive state, prompt paths,
-repositories, branches, and commits are derived from the directory layout,
-prompt files, and Git whenever Cockpit reads the workspace.
+workspace needs.  =workspace.json= belongs to cockpit and contains the schema
+version, logical workspace name, and resumable ACP session references (agent
+ID, session ID, and an optional display title).  The name remains stable when
+an archive directory gains its collision-proof UUID suffix.  Cockpit does not
+duplicate transcripts maintained by the agent.  Title, active/archive state,
+prompt paths, repositories, branches, and commits are derived from the
+directory layout, prompt files, and Git whenever Cockpit reads the workspace.
 * Configuration
 
 - =agent-shell-cockpit-workspace-directory= controls the active workspace
   root and defaults to =~/.workspaces/=.
 - =agent-shell-cockpit-archive-directory= optionally places archives
   elsewhere; nil means =.archive= below the active root.
-- =agent-shell-cockpit-prompts-directory-name= and
-  =agent-shell-cockpit-default-prompt-filename= define the prompt layout.
+- =agent-shell-cockpit-prompts-directory-name= defines the prompt directory.
+- =agent-shell-cockpit-agent-preview-lines= controls the size of expanded live
+  agent snapshots.
 - =agent-shell-cockpit-repositories-directory-name= defines where Cockpit
   creates and discovers worktrees inside each workspace.
 - =agent-shell-cockpit-default-command= selects the default interactive agent
   starter.
 - =agent-shell-cockpit-refresh-interval= controls automatic UI refresh.
-- =agent-shell-cockpit-width= controls the dashboard/preview split.
 
 * Recovery
 

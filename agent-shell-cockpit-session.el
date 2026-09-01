@@ -24,7 +24,11 @@
 (declare-function agent-shell-unsubscribe "agent-shell")
 (declare-function agent-shell-buffers "agent-shell")
 (declare-function agent-shell-status "agent-shell")
+(declare-function agent-shell-cockpit "agent-shell-cockpit-dashboard")
+(declare-function agent-shell-cockpit-workspace-view
+                  "agent-shell-cockpit-workspace-view")
 (defvar agent-shell--state)
+(defvar agent-shell-cockpit--buffer)
 
 (defcustom agent-shell-cockpit-default-command #'agent-shell-new-shell
   "Interactive command used to start a workspace's default agent."
@@ -36,6 +40,69 @@
 
 (defvar-local agent-shell-cockpit-session--subscription nil
   "Cockpit event subscription token for this agent buffer.")
+
+(defvar-local agent-shell-cockpit-session-return-buffer nil
+  "Cockpit buffer to revisit when leaving this managed agent session.")
+
+(defvar-keymap agent-shell-cockpit-session-mode-map
+  :doc "Keymap active in agent buffers managed by Cockpit."
+  "C-c C-b" #'agent-shell-cockpit-session-return)
+
+(define-minor-mode agent-shell-cockpit-session-mode
+  "Mark the current agent buffer as managed by Cockpit."
+  :lighter " Cockpit"
+  :keymap agent-shell-cockpit-session-mode-map)
+
+(defun agent-shell-cockpit-session-visit (buffer)
+  "Visit agent BUFFER and remember the current Cockpit buffer."
+  (unless (buffer-live-p buffer)
+    (user-error "Agent buffer is no longer live"))
+  (let ((origin (current-buffer)))
+    (with-current-buffer buffer
+      (setq agent-shell-cockpit-session-return-buffer origin)
+      (agent-shell-cockpit-session-mode 1))
+    (switch-to-buffer buffer)))
+
+(defun agent-shell-cockpit-session-return ()
+  "Return from a managed agent buffer to its Cockpit context."
+  (interactive)
+  (cond
+   ((buffer-live-p agent-shell-cockpit-session-return-buffer)
+    (switch-to-buffer agent-shell-cockpit-session-return-buffer))
+   ((agent-shell-cockpit-session-workspace (current-buffer))
+    (agent-shell-cockpit-workspace-view
+     (agent-shell-cockpit-session-workspace (current-buffer))))
+   ((buffer-live-p agent-shell-cockpit--buffer)
+    (switch-to-buffer agent-shell-cockpit--buffer))
+   (t (agent-shell-cockpit))))
+
+(defun agent-shell-cockpit-session-allow-once (buffer)
+  "Allow the latest pending permission request in agent BUFFER once.
+
+This invokes agent-shell's own permission action without displaying BUFFER."
+  (unless (buffer-live-p buffer)
+    (user-error "Agent buffer is no longer live"))
+  (with-current-buffer buffer
+    (save-excursion
+      (let ((position (point-min))
+            permission-position)
+        (while (< position (point-max))
+          (when (get-text-property
+                 position 'agent-shell-permission-button)
+            (setq permission-position position))
+          (setq position
+                (or (next-single-property-change
+                     position 'agent-shell-permission-button
+                     nil (point-max))
+                    (point-max))))
+        (let* ((match permission-position)
+             (command
+              (when match
+                (goto-char match)
+                (key-binding (kbd "y") t))))
+          (unless (commandp command)
+            (user-error "Agent has no pending permission request"))
+          (call-interactively command))))))
 
 (defun agent-shell-cockpit-session--state-value (path)
   "Return agent-shell's private state value at PATH.
@@ -154,6 +221,7 @@ All compatibility-sensitive state access is isolated in this function."
     (setq agent-shell-cockpit-session-workspace-root
           (file-name-as-directory
            (file-truename (map-elt workspace 'root))))
+    (agent-shell-cockpit-session-mode 1)
     (agent-shell-cockpit-session--subscribe)
     (agent-shell-cockpit-session--upsert-current))
   buffer)
@@ -168,13 +236,17 @@ All compatibility-sensitive state access is isolated in this function."
   "Start COMMAND at WORKSPACE root and attach the resulting agent buffer."
   (unless (commandp command)
     (user-error "Agent command is not interactive: %S" command))
-  (let ((before (agent-shell-buffers))
+  (let ((origin (current-buffer))
+        (before (agent-shell-buffers))
         (default-directory (map-elt workspace 'root)))
     (let* ((result (call-interactively command))
            (buffer (agent-shell-cockpit-session--new-buffer before result)))
       (unless buffer
         (user-error "Agent command did not create a shell buffer"))
-      (agent-shell-cockpit-session-attach buffer workspace))))
+      (agent-shell-cockpit-session-attach buffer workspace)
+      (with-current-buffer buffer
+        (setq agent-shell-cockpit-session-return-buffer origin))
+      buffer)))
 
 (defun agent-shell-cockpit-session-start-default (workspace)
   "Start the configured default agent for WORKSPACE."
@@ -196,7 +268,8 @@ All compatibility-sensitive state access is isolated in this function."
   "Resume SESSION inside WORKSPACE and return the new live buffer."
   (when (equal (map-elt workspace 'state) "archived")
     (user-error "Archived workspaces cannot resume sessions"))
-  (let ((config (agent-shell-cockpit-session--config
+  (let ((origin (current-buffer))
+        (config (agent-shell-cockpit-session--config
                  (map-elt session 'agentId)))
         (default-directory (map-elt workspace 'root)))
     (unless config
@@ -204,7 +277,10 @@ All compatibility-sensitive state access is isolated in this function."
                   (map-elt session 'agentId)))
     (let ((buffer (agent-shell-start
                    :config config :session-id (map-elt session 'sessionId))))
-      (agent-shell-cockpit-session-attach buffer workspace))))
+      (agent-shell-cockpit-session-attach buffer workspace)
+      (with-current-buffer buffer
+        (setq agent-shell-cockpit-session-return-buffer origin))
+      buffer)))
 
 (provide 'agent-shell-cockpit-session)
 

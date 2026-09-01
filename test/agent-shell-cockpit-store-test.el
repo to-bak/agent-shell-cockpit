@@ -7,16 +7,13 @@
     (let* ((workspace (agent-shell-cockpit-workspace-create
                        :name "alpha" :title "Alpha"))
            (loaded (agent-shell-cockpit-store-read (map-elt workspace 'root))))
-      (should (equal (map-elt loaded 'title) "Alpha"))
+      (should (equal (map-elt loaded 'title) "alpha"))
       (should (equal (map-elt loaded 'name) "alpha"))
       (should (equal (map-elt loaded 'state) "active"))
       (should (equal (map-elt loaded 'sessions) nil))
       (should (equal (map-elt (car (agent-shell-cockpit-store-discover)) 'root)
                      (map-elt workspace 'root)))
-      (with-temp-buffer
-        (insert-file-contents
-         (car (agent-shell-cockpit-workspace-prompt-paths loaded)))
-        (should (equal (buffer-string) "#+TITLE: Alpha\n"))))))
+      (should-not (agent-shell-cockpit-workspace-prompt-paths loaded)))))
 
 (ert-deftest agent-shell-cockpit-workspace-defaults-title-to-directory-name ()
   (agent-shell-cockpit-test-with-root
@@ -24,12 +21,9 @@
       (should (equal (map-elt workspace 'title) "alpha"))
       (should (file-directory-p
                (agent-shell-cockpit-workspace-prompts-path workspace)))
-      (should (equal
-               (mapcar (lambda (path) (file-name-nondirectory path))
-                       (agent-shell-cockpit-workspace-prompt-paths workspace))
-               '("prompt.org"))))))
+      (should-not (agent-shell-cockpit-workspace-prompt-paths workspace)))))
 
-(ert-deftest agent-shell-cockpit-store-persists-only-schema-and-sessions ()
+(ert-deftest agent-shell-cockpit-store-persists-deliberate-metadata-subset ()
   (agent-shell-cockpit-test-with-root
     (let* ((workspace (agent-shell-cockpit-workspace-create
                        :name "alpha" :title "Alpha"))
@@ -46,9 +40,29 @@
         (let* ((json (json-parse-buffer :object-type 'alist
                                         :array-type 'list))
                (session (car (map-elt json 'sessions))))
-          (should (equal (mapcar #'car json) '(schemaVersion sessions)))
+          (should (equal (mapcar #'car json)
+                         '(schemaVersion sessions name)))
           (should (equal (mapcar #'car session)
                          '(agentId sessionId title))))))))
+
+(ert-deftest agent-shell-cockpit-archives-use-unique-uuid-directories ()
+  (agent-shell-cockpit-test-with-root
+    (let* ((first (agent-shell-cockpit-workspace-archive
+                   (agent-shell-cockpit-workspace-create :name "alpha")))
+           (second (agent-shell-cockpit-workspace-archive
+                    (agent-shell-cockpit-workspace-create :name "alpha")))
+           (archives (agent-shell-cockpit-store-discover t))
+           (pattern
+            "\\`alpha--[[:xdigit:]]\\{8\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{12\\}\\'"))
+      (should-not (equal (map-elt first 'root) (map-elt second 'root)))
+      (should (= (length archives) 2))
+      (dolist (workspace archives)
+        (should (equal (map-elt workspace 'name) "alpha"))
+        (should
+         (string-match-p
+          pattern
+          (file-name-nondirectory
+           (directory-file-name (map-elt workspace 'root)))))))))
 
 (ert-deftest agent-shell-cockpit-store-exposes-invalid-workspace ()
   (agent-shell-cockpit-test-with-root
@@ -112,7 +126,8 @@
       (with-temp-file path (insert "broken"))
       (let* ((invalid (car (agent-shell-cockpit-store-discover)))
              (repaired (agent-shell-cockpit-workspace-repair invalid)))
-        (should (equal (map-elt repaired 'title) "Alpha"))
+        (should (equal (map-elt repaired 'title) "alpha"))
+        (should-not (agent-shell-cockpit-workspace-prompt-paths repaired))
         (should (file-exists-p path))
         (should (seq-some
                  (lambda (candidate)

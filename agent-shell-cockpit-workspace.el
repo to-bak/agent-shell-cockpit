@@ -11,6 +11,7 @@
 ;;; Code:
 
 (require 'map)
+(require 'org-id)
 (require 'project)
 (require 'seq)
 (require 'subr-x)
@@ -36,7 +37,8 @@
 
 (cl-defun agent-shell-cockpit-workspace-create (&key name title)
   "Create and return a workspace named NAME.
-TITLE defaults to NAME and is written to its initial prompt file."
+TITLE is accepted for compatibility; workspace titles are derived from user
+prompt files when present, and otherwise from NAME."
   (agent-shell-cockpit-workspace--validate-name name)
   (setq title (or title name))
   (when (string-empty-p (string-trim title))
@@ -63,12 +65,6 @@ TITLE defaults to NAME and is written to its initial prompt file."
           (make-directory
            (expand-file-name agent-shell-cockpit-prompts-directory-name
                              temporary))
-          (with-temp-file
-              (expand-file-name
-               agent-shell-cockpit-default-prompt-filename
-               (expand-file-name
-                agent-shell-cockpit-prompts-directory-name temporary))
-            (insert "#+TITLE: " title "\n"))
           (agent-shell-cockpit-store-write record)
           (rename-file temporary target)
           (setq temporary nil)
@@ -106,8 +102,7 @@ TITLE defaults to NAME and is written to its initial prompt file."
 (defun agent-shell-cockpit-workspace--new-prompt-path (workspace)
   "Read and return a new prompt path inside WORKSPACE."
   (let* ((directory (agent-shell-cockpit-workspace-prompts-path workspace))
-         (name (read-string "New prompt filename: "
-                            agent-shell-cockpit-default-prompt-filename)))
+         (name (read-string "New prompt filename: ")))
     (unless (and (not (string-empty-p name))
                  (equal name (file-name-nondirectory name))
                  (not (member name '("." ".."))))
@@ -140,7 +135,6 @@ Session metadata remains available only in the timestamped backup."
     (user-error "Workspace metadata is not marked invalid"))
   (let* ((root (map-elt invalid-record 'root))
          (path (agent-shell-cockpit-store-metadata-path root))
-         (title (agent-shell-cockpit-store--prompt-title root))
          (record
           (list (cons 'schemaVersion agent-shell-cockpit-store-schema-version)
                 (cons 'sessions nil)
@@ -149,15 +143,7 @@ Session metadata remains available only in the timestamped backup."
     (when (file-exists-p path)
       (copy-file path (format "%s.backup-%s" path
                               (format-time-string "%Y%m%dT%H%M%S")) t))
-    (let* ((prompt-directory
-            (agent-shell-cockpit-workspace-prompts-path record))
-           (prompt (expand-file-name
-                    agent-shell-cockpit-default-prompt-filename
-                    prompt-directory)))
-      (make-directory prompt-directory t)
-      (unless (agent-shell-cockpit-workspace-prompt-paths record)
-        (with-temp-file prompt
-          (insert "#+TITLE: " title "\n"))))
+    (make-directory (agent-shell-cockpit-workspace-prompts-path record) t)
     (agent-shell-cockpit-store-write record)
     (agent-shell-cockpit-store-read root)))
 
@@ -188,11 +174,6 @@ Session metadata remains available only in the timestamped backup."
   (when (and (fboundp 'agent-shell-cockpit-session-live-buffers)
              (agent-shell-cockpit-session-live-buffers workspace))
     (user-error "Stop the workspace's live agent sessions before archiving"))
-  (let ((destination
-         (expand-file-name (map-elt workspace 'name)
-                           (agent-shell-cockpit-store-archive-directory))))
-    (when (file-exists-p destination)
-      (user-error "Archive destination already exists: %s" destination)))
   (dolist (repository
            (agent-shell-cockpit-workspace-active-repositories workspace))
     (let ((path (agent-shell-cockpit-workspace-repository-path
@@ -202,14 +183,27 @@ Session metadata remains available only in the timestamped backup."
       (unless (agent-shell-cockpit-git-clean-p path)
         (user-error "Worktree has tracked or untracked changes: %s" path)))))
 
+(defun agent-shell-cockpit-workspace--archive-destination (workspace)
+  "Return a unique UUID-qualified archive path for WORKSPACE."
+  (let ((archive-root (agent-shell-cockpit-store-archive-directory))
+        destination)
+    (while (or (null destination) (file-exists-p destination))
+      (setq destination
+            (expand-file-name
+             (format "%s--%s" (map-elt workspace 'name) (org-id-uuid))
+             archive-root)))
+    destination))
+
 (defun agent-shell-cockpit-workspace-archive (workspace)
   "Safely archive WORKSPACE and return its updated record."
   (require 'agent-shell-cockpit-git)
   (agent-shell-cockpit-workspace--archive-preflight workspace)
   (let* ((old-root (map-elt workspace 'root))
          (archive-root (agent-shell-cockpit-store-archive-directory))
-         (destination (expand-file-name (map-elt workspace 'name)
-                                        archive-root)))
+         (destination
+          (agent-shell-cockpit-workspace--archive-destination workspace)))
+    ;; Persist the logical name before the physical directory gains a UUID.
+    (agent-shell-cockpit-store-write workspace)
     (dolist (repository
              (copy-sequence
               (agent-shell-cockpit-workspace-active-repositories workspace)))
@@ -218,6 +212,22 @@ Session metadata remains available only in the timestamped backup."
     (rename-file old-root destination)
     (ignore-errors (project-forget-project old-root))
     (agent-shell-cockpit-store-read destination)))
+
+(defun agent-shell-cockpit-workspace-delete-archive (workspace)
+  "Permanently delete archived WORKSPACE and all of its files.
+Signal a user error unless the workspace root is the expected direct child
+of the configured archive directory.  Confirmation belongs to the caller."
+  (let* ((root (file-name-as-directory
+                (expand-file-name (map-elt workspace 'root))))
+         (archive-root (file-name-as-directory
+                        (agent-shell-cockpit-store-archive-directory)))
+         (parent (file-name-directory (directory-file-name root))))
+    (unless (and (file-directory-p root)
+                 (file-in-directory-p root archive-root)
+                 (file-equal-p parent archive-root))
+      (user-error "Refusing to delete path outside the archive: %s" root))
+    (delete-directory root t)
+    t))
 
 (provide 'agent-shell-cockpit-workspace)
 
