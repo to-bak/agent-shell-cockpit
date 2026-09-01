@@ -89,9 +89,9 @@ frequent commands also have the same mnemonic keys directly in the view.  Use
 
 Files below =prompts/= belong to the user; add as many prompt files as the
 workspace needs.  =workspace.json= belongs to cockpit and contains the schema
-version, logical workspace name, and resumable ACP session references (agent
-ID, session ID, and an optional display title).  The name remains stable when
-an archive directory gains its collision-proof UUID suffix.  Cockpit does not
+version, logical workspace name, archive timestamp, and resumable ACP session
+references (agent ID, session ID, and an optional display title).  The name
+remains stable when an archive directory gains its collision-proof UUID suffix.  Cockpit does not
 duplicate transcripts maintained by the agent.  Title, active/archive state,
 prompt paths, repositories, branches, and commits are derived from the
 directory layout, prompt files, and Git whenever Cockpit reads the workspace.

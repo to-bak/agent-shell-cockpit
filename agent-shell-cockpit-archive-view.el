@@ -26,28 +26,103 @@
   :type 'string
   :group 'agent-shell-cockpit)
 
+(defface agent-shell-cockpit-archive-id
+  '((t :inherit shadow))
+  "Face for abbreviated archive UUIDs."
+  :group 'agent-shell-cockpit)
+
+(defface agent-shell-cockpit-archive-count
+  '((t :inherit font-lock-constant-face))
+  "Face for recorded-agent counts in archive rows."
+  :group 'agent-shell-cockpit)
+
+(defface agent-shell-cockpit-archive-date
+  '((t :inherit shadow))
+  "Face for relative dates in archive rows."
+  :group 'agent-shell-cockpit)
+
+(defun agent-shell-cockpit-archive-view--time (workspace)
+  "Return the archive time for WORKSPACE.
+Use metadata modification time for archives created before timestamps were
+stored explicitly."
+  (or (when-let* ((seconds (map-elt workspace 'archivedAt)))
+        (seconds-to-time seconds))
+      (when-let* ((attributes
+                   (file-attributes
+                    (agent-shell-cockpit-store-metadata-path
+                     (map-elt workspace 'root)))))
+        (file-attribute-modification-time attributes))
+      (seconds-to-time 0)))
+
+(defun agent-shell-cockpit-archive-view--age (time)
+  "Return a compact human-readable age for TIME."
+  (let* ((seconds (max 0 (- (float-time) (float-time time))))
+         (spec (cond
+                ((< seconds 60) (list 1 "second"))
+                ((< seconds 3600) (list 60 "minute"))
+                ((< seconds 86400) (list 3600 "hour"))
+                ((< seconds 604800) (list 86400 "day"))
+                ((< seconds 2629800) (list 604800 "week"))
+                ((< seconds 31557600) (list 2629800 "month"))
+                (t (list 31557600 "year"))))
+         (count (max 1 (round (/ seconds (car spec)))))
+         (unit (cadr spec)))
+    (format "%d %s%s" count unit (if (= count 1) "" "s"))))
+
+(defun agent-shell-cockpit-archive-view--identifier (workspace)
+  "Return a short stable identifier for archived WORKSPACE."
+  (let ((directory
+         (file-name-nondirectory
+          (directory-file-name (map-elt workspace 'root)))))
+    (if (string-match
+         "--\\([[:xdigit:]]\\{8\\}\\)-[[:xdigit:]-]\\{27\\}\\'"
+         directory)
+        (match-string 1 directory)
+      (substring (secure-hash 'sha1 directory) 0 8))))
+
 (defun agent-shell-cockpit-archive-view--workspaces ()
-  "Return archived workspaces sorted by title."
+  "Return archived workspaces sorted newest first."
   (sort (agent-shell-cockpit-store-discover t)
         (lambda (left right)
-          (string-lessp (or (map-elt left 'title) (map-elt left 'name))
-                        (or (map-elt right 'title) (map-elt right 'name))))))
+          (let ((left-time (agent-shell-cockpit-archive-view--time left))
+                (right-time (agent-shell-cockpit-archive-view--time right)))
+            (if (time-equal-p left-time right-time)
+                (string-lessp
+                 (or (map-elt left 'title) (map-elt left 'name))
+                 (or (map-elt right 'title) (map-elt right 'name)))
+              (time-less-p right-time left-time))))))
 
 (defun agent-shell-cockpit-archive-view--insert-workspace (workspace)
   "Insert a flat history row for archived WORKSPACE."
   (let ((title (or (map-elt workspace 'title) (map-elt workspace 'name)))
-        (root (map-elt workspace 'root)))
+        (root (map-elt workspace 'root))
+        (invalid (eq (map-elt workspace 'kind) 'invalid)))
     (magit-insert-section
         (agent-shell-cockpit-section root nil
                                      :kind 'archived-workspace
                                      :object workspace)
       (insert (propertize
-               (format "%-28s" (agent-shell-cockpit-ui-one-line title 27))
-               'face (if (eq (map-elt workspace 'kind) 'invalid)
-                         'error
-                       'default))
-              (propertize (abbreviate-file-name root)
-                          'face 'agent-shell-cockpit-secondary)
+               (format "%-8s" (agent-shell-cockpit-archive-view--identifier
+                               workspace))
+               'font-lock-face 'agent-shell-cockpit-archive-id)
+              " * "
+              (propertize
+               (agent-shell-cockpit-ui-one-line title 80)
+               'font-lock-face (if invalid 'error 'default))
+              (propertize " " 'display '(space :align-to (- right 24)))
+              (propertize
+               (if invalid
+                   "invalid"
+                 (format "%d agent%s"
+                         (length (map-elt workspace 'sessions))
+                         (if (= (length (map-elt workspace 'sessions)) 1)
+                             "" "s")))
+               'font-lock-face 'agent-shell-cockpit-archive-count)
+              "  "
+              (propertize
+               (agent-shell-cockpit-archive-view--age
+                (agent-shell-cockpit-archive-view--time workspace))
+               'font-lock-face 'agent-shell-cockpit-archive-date)
               ?\n))))
 
 (defun agent-shell-cockpit-archive-view--render ()
@@ -56,22 +131,11 @@
     (erase-buffer)
     (magit-insert-section
         (agent-shell-cockpit-section 'archives nil :kind 'root)
-      (agent-shell-cockpit-ui-insert-header
-       "Archives"
-       (abbreviate-file-name
-        (agent-shell-cockpit-store-archive-directory)))
-      (insert ?\n)
-      (magit-insert-section
-          (agent-shell-cockpit-section 'archived-workspaces nil :kind 'group)
-        (insert (propertize
-                 (format "Archived workspaces (%d)" (length workspaces))
-                 'font-lock-face 'magit-section-heading)
-                ?\n)
-        (if workspaces
-            (dolist (workspace workspaces)
-              (agent-shell-cockpit-archive-view--insert-workspace workspace))
-          (insert (propertize "No archived workspaces\n"
-                              'face 'agent-shell-cockpit-secondary)))))))
+      (if workspaces
+          (dolist (workspace workspaces)
+            (agent-shell-cockpit-archive-view--insert-workspace workspace))
+        (insert (propertize "No archived workspaces\n"
+                            'face 'agent-shell-cockpit-secondary))))))
 
 (defun agent-shell-cockpit-archive-view-refresh ()
   "Refresh the Cockpit archive history buffer."

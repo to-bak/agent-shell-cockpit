@@ -133,6 +133,9 @@ When FALLBACK is nil, use ROOT's directory name."
            (map-elt record 'schemaVersion)))
   (unless (listp (map-elt record 'sessions))
     (error "Invalid sessions collection"))
+  (when (and (map-elt record 'archivedAt)
+             (not (numberp (map-elt record 'archivedAt))))
+    (error "Invalid archive timestamp"))
   (mapc #'agent-shell-cockpit-store--validate-session
         (map-elt record 'sessions))
   (setq root (file-name-as-directory (expand-file-name root)))
@@ -217,9 +220,14 @@ workspace records are included so the UI can report them."
                                      `((title . ,(map-elt session 'title))))))
                      copy))
                  (map-elt record 'sessions)))))))
-    (if (stringp (map-elt record 'name))
-        (append serialized `((name . ,(map-elt record 'name))))
-      serialized)))
+    (when (stringp (map-elt record 'name))
+      (setq serialized
+            (append serialized `((name . ,(map-elt record 'name))))))
+    (when (numberp (map-elt record 'archivedAt))
+      (setq serialized
+            (append serialized
+                    `((archivedAt . ,(map-elt record 'archivedAt))))))
+    serialized))
 
 (defun agent-shell-cockpit-store-write (record)
   "Atomically persist workspace RECORD and return it."

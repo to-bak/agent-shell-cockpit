@@ -203,6 +203,8 @@ Session metadata remains available only in the timestamped backup."
          (destination
           (agent-shell-cockpit-workspace--archive-destination workspace)))
     ;; Persist the logical name before the physical directory gains a UUID.
+    (agent-shell-cockpit-store-set
+     workspace 'archivedAt (floor (float-time)))
     (agent-shell-cockpit-store-write workspace)
     (dolist (repository
              (copy-sequence

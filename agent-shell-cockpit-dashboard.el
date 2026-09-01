@@ -64,27 +64,25 @@ Each function receives WORKSPACES and AGENTS."
                             (agent-shell-cockpit-ui-one-line
                              (map-elt workspace 'error) 50)
                             'face 'error))
-                 (propertize
-                  (format "%d agent%s, %d prompt%s, %d repositor%s"
-                          (length (agent-shell-cockpit-session-live-buffers
-                                   workspace))
-                          (if (= (length
-                                  (agent-shell-cockpit-session-live-buffers
-                                   workspace)) 1) "" "s")
-                          (length
-                           (agent-shell-cockpit-workspace-prompt-paths
-                            workspace))
-                          (if (= (length
-                                  (agent-shell-cockpit-workspace-prompt-paths
-                                   workspace)) 1) "" "s")
-                          (length
-                           (agent-shell-cockpit-workspace-active-repositories
-                            workspace))
-                          (if (= (length
-                                  (agent-shell-cockpit-workspace-active-repositories
-                                   workspace)) 1) "y" "ies"))
-                  'face 'agent-shell-cockpit-secondary)))
+                 (agent-shell-cockpit-dashboard--workspace-summary
+                  workspace)))
        ?\n))))
+
+(defun agent-shell-cockpit-dashboard--workspace-summary (workspace)
+  "Return an icon-based resource summary for WORKSPACE."
+  (let ((agents (length
+                 (agent-shell-cockpit-session-live-buffers workspace)))
+        (prompts (length
+                  (agent-shell-cockpit-workspace-prompt-paths workspace)))
+        (repositories
+         (length
+          (agent-shell-cockpit-workspace-active-repositories workspace))))
+    (propertize
+     (format "%d %s  %d %s  %d %s"
+             agents (agent-shell-cockpit-ui-icon 'agent)
+             prompts (agent-shell-cockpit-ui-icon 'prompt)
+             repositories (agent-shell-cockpit-ui-icon 'repository))
+     'face 'agent-shell-cockpit-secondary)))
 
 (defun agent-shell-cockpit-dashboard--insert-session (buffer &optional workspace)
   "Insert live agent BUFFER with a preview for optional WORKSPACE."
@@ -115,31 +113,33 @@ Each function receives WORKSPACES and AGENTS."
   "Insert the live AGENTS section."
   (magit-insert-section
       (agent-shell-cockpit-section 'live-agents nil :kind 'group)
-    (insert (propertize (format "Agents (%d)" (length agents))
-                        'font-lock-face 'magit-section-heading)
-            ?\n)
-    (if agents
-        (dolist (buffer
-                 (agent-shell-cockpit-dashboard--sorted-sessions agents))
-          (agent-shell-cockpit-dashboard--insert-session
-           buffer (agent-shell-cockpit-session-workspace buffer)))
-      (insert (propertize "No live agents\n"
-                          'face 'agent-shell-cockpit-secondary)))
-    (insert ?\n)))
+    (magit-insert-heading
+      (propertize (format "Agents (%d)" (length agents))
+                  'font-lock-face 'magit-section-heading))
+    (magit-insert-section-body
+      (if agents
+          (dolist (buffer
+                   (agent-shell-cockpit-dashboard--sorted-sessions agents))
+            (agent-shell-cockpit-dashboard--insert-session
+             buffer (agent-shell-cockpit-session-workspace buffer)))
+        (insert (propertize "No live agents\n"
+                            'face 'agent-shell-cockpit-secondary)))
+      (insert ?\n))))
 
 (defun agent-shell-cockpit-dashboard-insert-workspaces (workspaces _agents)
   "Insert the active WORKSPACES section."
   (magit-insert-section
       (agent-shell-cockpit-section 'workspaces nil :kind 'group)
-    (insert (propertize (format "Workspaces (%d)" (length workspaces))
-                        'font-lock-face 'magit-section-heading)
-            ?\n)
-    (if workspaces
-        (dolist (workspace workspaces)
-          (agent-shell-cockpit-dashboard--insert-workspace workspace))
-      (insert (propertize "No workspaces\n"
-                          'face 'agent-shell-cockpit-secondary)))
-    (insert ?\n)))
+    (magit-insert-heading
+      (propertize (format "Workspaces (%d)" (length workspaces))
+                  'font-lock-face 'magit-section-heading))
+    (magit-insert-section-body
+      (if workspaces
+          (dolist (workspace workspaces)
+            (agent-shell-cockpit-dashboard--insert-workspace workspace))
+        (insert (propertize "No workspaces\n"
+                            'face 'agent-shell-cockpit-secondary)))
+      (insert ?\n))))
 
 (defun agent-shell-cockpit-dashboard--render ()
   "Render the current cockpit dashboard."

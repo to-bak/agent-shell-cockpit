@@ -167,7 +167,7 @@
             (should (string-match-p "Repositories" (buffer-string))))
         (when (buffer-live-p detail) (kill-buffer detail))))))
 
-(ert-deftest agent-shell-cockpit-dashboard-groups-and-workspaces-are-flat ()
+(ert-deftest agent-shell-cockpit-dashboard-groups-collapse-but-rows-are-flat ()
   (agent-shell-cockpit-test-with-root
     (agent-shell-cockpit-workspace-create :name "alpha" :title "Alpha")
     (with-temp-buffer
@@ -175,11 +175,25 @@
       (agent-shell-cockpit-dashboard-refresh)
       (let* ((workspaces (cadr (oref magit-root-section children)))
              (workspace (car (oref workspaces children))))
-        (should-not (oref workspaces content))
+        (should (oref workspaces content))
         (should-not (oref workspace content))
         (goto-char (oref workspaces start))
         (agent-shell-cockpit-toggle-section)
-        (should-not (oref workspaces hidden))))))
+        (should (oref workspaces hidden))
+        (agent-shell-cockpit-dashboard-refresh)
+        (setq workspaces (cadr (oref magit-root-section children)))
+        (should (oref workspaces hidden))))))
+
+(ert-deftest agent-shell-cockpit-dashboard-workspace-summary-uses-icons ()
+  (agent-shell-cockpit-test-with-root
+    (let ((workspace (agent-shell-cockpit-workspace-create
+                      :name "alpha" :title "Alpha")))
+      (cl-letf (((symbol-function 'agent-shell-cockpit-ui-icon)
+                 (lambda (kind) (format "[%s]" kind))))
+        (should
+         (equal (substring-no-properties
+                 (agent-shell-cockpit-dashboard--workspace-summary workspace))
+                "0 [agent]  0 [prompt]  0 [repository]"))))))
 
 (ert-deftest agent-shell-cockpit-archives-open-in-history-buffer ()
   (agent-shell-cockpit-test-with-root
@@ -191,11 +205,15 @@
       (should-not (string-match-p "Archived workspaces" (buffer-string)))
       (agent-shell-cockpit-archive-view-mode)
       (agent-shell-cockpit-archive-view-refresh)
-      (should (string-match-p "Archived workspaces" (buffer-string)))
+      (should (string-match-p "Archives in"
+                              (agent-shell-cockpit-ui-header-context)))
       (should (string-match-p "alpha" (buffer-string)))
-      (let* ((group (car (oref magit-root-section children)))
-             (workspace (car (oref group children))))
-        (should-not (oref group content))
+      (should (string-match-p "[[:xdigit:]]\\{8\\} \\* alpha"
+                              (buffer-string)))
+      (should (string-match-p "0 agents  [0-9]+ \\(second\\|minute\\|hour\\|day\\|week\\|month\\|year\\)s?"
+                              (buffer-string)))
+      (let ((workspace (car (oref magit-root-section children))))
+        (should (eq (oref workspace kind) 'archived-workspace))
         (should-not (oref workspace content))))))
 
 (ert-deftest agent-shell-cockpit-archive-view-permanently-deletes-workspace ()
@@ -319,7 +337,7 @@
                 (should-not (string-match-p "^Second line" text)))
               (let* ((agents (car (oref magit-root-section children)))
                      (section (car (oref agents children))))
-                (should-not (oref agents content))
+                (should (oref agents content))
                 (should (oref section content))
                 (should-not (string-match-p "Latest agent answer"
                                             (buffer-string)))
@@ -388,7 +406,17 @@
           (goto-char (point-min))
           (search-forward "Inline prompt body")
           (should (eq (get-text-property (1- (point)) 'font-lock-face)
-                      'agent-shell-cockpit-prompt-preview)))))))
+                      'agent-shell-cockpit-prompt-preview))
+          (goto-char (point-min))
+          (search-forward "TITLE")
+          (should
+           (seq-some
+            (lambda (overlay)
+              (let ((face (overlay-get overlay 'face)))
+                (or (eq face 'org-document-info-keyword)
+                    (and (listp face)
+                         (memq 'org-document-info-keyword face)))))
+            (overlays-at (1- (point))))))))))
 
 (ert-deftest agent-shell-cockpit-refresh-installs-visibility-indicators ()
   (agent-shell-cockpit-test-with-root
@@ -406,7 +434,7 @@
         (agent-shell-cockpit-workspace-view-refresh)
         (let* ((prompts (cadr (oref magit-root-section children)))
                (prompt (car (oref prompts children))))
-          (should-not (oref prompts content))
+          (should (oref prompts content))
           (should (oref prompt hidden))
           (should (seq-some
                    (lambda (overlay)

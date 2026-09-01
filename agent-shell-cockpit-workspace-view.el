@@ -91,18 +91,92 @@ When NON-COLLAPSIBLE is non-nil, omit the expandable detail body."
    "File" (abbreviate-file-name path))
   (condition-case error-data
       (let ((start (point)))
-        (goto-char (+ start (cadr (insert-file-contents path))))
+        (insert (agent-shell-cockpit-workspace-view--fontified-file path))
         (unless (bolp)
           (insert ?\n))
         (let ((end (copy-marker (point) t)))
           (indent-rigidly start end 2)
-          (add-text-properties
-           start end '(font-lock-face agent-shell-cockpit-prompt-preview))
+          (agent-shell-cockpit-workspace-view--apply-fontified-faces
+           start end)
           (set-marker end nil)))
     (file-error
      (insert "  "
              (propertize (error-message-string error-data) 'face 'error)
              "\n"))))
+
+(defun agent-shell-cockpit-workspace-view--fontified-file (path)
+  "Return PATH's contents fontified using its normal major mode.
+File-local variables and mode hooks are not run.  Only face properties
+are retained, with the prompt-preview face layered underneath them."
+  (let ((source (generate-new-buffer "cockpit-prompt-preview")))
+    (unwind-protect
+        (with-current-buffer source
+          (let ((buffer-file-name path)
+                (default-directory (file-name-directory path))
+                (enable-local-eval nil)
+                (enable-local-variables nil)
+                (inhibit-message t))
+            (insert-file-contents path)
+            ;; Like Magit's blob buffers, use the file's normal major mode as
+            ;; an isolated source of syntax faces.  Delayed hooks disappear
+            ;; with this temporary buffer instead of running user code.
+            (condition-case nil
+                (progn
+                  (delay-mode-hooks (normal-mode t))
+                  (font-lock-ensure))
+              (error
+               ;; A missing tree-sitter grammar or broken third-party mode
+               ;; should degrade to an unfontified preview, not abort refresh.
+               (remove-list-of-text-properties
+                (point-min) (point-max) '(face font-lock-face))))
+            (let ((text (buffer-substring (point-min) (point-max))))
+              (agent-shell-cockpit-workspace-view--sanitize-fontified-text
+               text)
+              text)))
+      (when (buffer-live-p source)
+        (kill-buffer source)))))
+
+(defun agent-shell-cockpit-workspace-view--sanitize-fontified-text (text)
+  "Remove all properties except syntax faces from TEXT."
+  (let ((position 0)
+        (length (length text)))
+    (while (< position length)
+      (let* ((next (next-property-change position text length))
+             (face (get-text-property position 'face text))
+             (font-lock-face
+              (get-text-property position 'font-lock-face text)))
+        (set-text-properties position next nil text)
+        (when face
+          (put-text-property position next 'face face text))
+        (when font-lock-face
+          (put-text-property
+           position next 'font-lock-face font-lock-face text))
+        (setq position next))))
+  text)
+
+(defun agent-shell-cockpit-workspace-view--apply-fontified-faces (start end)
+  "Turn source faces between START and END into display overlays.
+This follows Magit's diff preview approach, keeping source syntax faces
+outside the font-lock lifecycle of the cockpit buffer."
+  (let ((position start))
+    (while (< position end)
+      (let* ((next (next-property-change position nil end))
+             (face (get-text-property position 'face))
+             (font-lock-face (get-text-property position 'font-lock-face))
+             (source-face
+              (cond
+               ((and face font-lock-face) (list face font-lock-face))
+               (face face)
+               (font-lock-face font-lock-face))))
+        (when source-face
+          (let ((overlay (make-overlay position next nil t)))
+            (overlay-put overlay 'evaporate t)
+            (overlay-put overlay 'face source-face)))
+        (remove-list-of-text-properties
+         position next '(face font-lock-face))
+        (setq position next))))
+  (add-text-properties
+   start end '(font-lock-face agent-shell-cockpit-prompt-preview)))
 
 (defun agent-shell-cockpit-workspace-view--live-session-for (session workspace)
   "Return live buffer matching SESSION in WORKSPACE."
@@ -120,29 +194,30 @@ When NON-COLLAPSIBLE is non-nil, omit the expandable detail body."
   "Insert agent sections from LIVE-SESSIONS and HISTORY."
   (magit-insert-section
       (agent-shell-cockpit-section 'agents nil :kind 'group)
-    (insert (propertize
-             (format "Agents (%d)" (+ (length live-sessions)
-                                       (length history)))
-             'font-lock-face 'magit-section-heading)
-            ?\n)
-    (if (or live-sessions history)
-        (progn
-          (dolist (live live-sessions)
-            (agent-shell-cockpit-workspace-view--insert-row
-             (with-current-buffer live
-               (agent-shell-cockpit-session--title))
-             nil 'live-session live
-             (agent-shell-cockpit-session-status live)))
-          (dolist (session history)
-            (agent-shell-cockpit-workspace-view--insert-row
-             (or (map-elt session 'title)
-                 (map-elt session 'sessionId))
-             `(("Agent" . ,(map-elt session 'agentId))
-               ("Session" . ,(map-elt session 'sessionId)))
-             'session-history session 'history t)))
-      (insert (propertize "No recorded agents\n"
-                          'face 'agent-shell-cockpit-secondary)))
-    (insert ?\n)))
+    (magit-insert-heading
+      (propertize
+       (format "Agents (%d)" (+ (length live-sessions)
+                                 (length history)))
+       'font-lock-face 'magit-section-heading))
+    (magit-insert-section-body
+      (if (or live-sessions history)
+          (progn
+            (dolist (live live-sessions)
+              (agent-shell-cockpit-workspace-view--insert-row
+               (with-current-buffer live
+                 (agent-shell-cockpit-session--title))
+               nil 'live-session live
+               (agent-shell-cockpit-session-status live)))
+            (dolist (session history)
+              (agent-shell-cockpit-workspace-view--insert-row
+               (or (map-elt session 'title)
+                   (map-elt session 'sessionId))
+               `(("Agent" . ,(map-elt session 'agentId))
+                 ("Session" . ,(map-elt session 'sessionId)))
+               'session-history session 'history t)))
+        (insert (propertize "No recorded agents\n"
+                            'face 'agent-shell-cockpit-secondary)))
+      (insert ?\n))))
 
 (defun agent-shell-cockpit-workspace-insert-prompts
     (workspace _live-sessions _history prompts _repositories)
@@ -150,38 +225,40 @@ When NON-COLLAPSIBLE is non-nil, omit the expandable detail body."
 PROMPTS is the list of prompt files to render."
   (magit-insert-section
       (agent-shell-cockpit-section 'prompts nil :kind 'group)
-    (insert (propertize (format "Prompts (%d)" (length prompts))
-                        'font-lock-face 'magit-section-heading)
-            ?\n)
-    (if prompts
-        (dolist (prompt prompts)
-          (agent-shell-cockpit-workspace-view--insert-row
-           (agent-shell-cockpit-workspace-prompt-name workspace prompt)
-           (abbreviate-file-name prompt) 'prompt prompt))
-      (insert (propertize "No prompts\n"
-                          'face 'agent-shell-cockpit-secondary)))
-    (insert ?\n)))
+    (magit-insert-heading
+      (propertize (format "Prompts (%d)" (length prompts))
+                  'font-lock-face 'magit-section-heading))
+    (magit-insert-section-body
+      (if prompts
+          (dolist (prompt prompts)
+            (agent-shell-cockpit-workspace-view--insert-row
+             (agent-shell-cockpit-workspace-prompt-name workspace prompt)
+             (abbreviate-file-name prompt) 'prompt prompt))
+        (insert (propertize "No prompts\n"
+                            'face 'agent-shell-cockpit-secondary)))
+      (insert ?\n))))
 
 (defun agent-shell-cockpit-workspace-insert-repositories
     (workspace _live-sessions _history _prompts repositories)
   "Insert REPOSITORIES for WORKSPACE."
   (magit-insert-section
       (agent-shell-cockpit-section 'repositories nil :kind 'group)
-    (insert (propertize (format "Repositories (%d)" (length repositories))
-                        'font-lock-face 'magit-section-heading)
-            ?\n)
-    (if repositories
-        (dolist (repository repositories)
-          (agent-shell-cockpit-workspace-view--insert-row
-           (map-elt repository 'name)
-           (let ((path (agent-shell-cockpit-workspace-repository-path
-                        workspace repository)))
-             `(("Path" . ,(abbreviate-file-name path))
-               ("Status" . ,(agent-shell-cockpit-git-description path))))
-           'repository repository))
-      (insert (propertize "No repositories\n"
-                          'face 'agent-shell-cockpit-secondary)))
-    (insert ?\n)))
+    (magit-insert-heading
+      (propertize (format "Repositories (%d)" (length repositories))
+                  'font-lock-face 'magit-section-heading))
+    (magit-insert-section-body
+      (if repositories
+          (dolist (repository repositories)
+            (agent-shell-cockpit-workspace-view--insert-row
+             (map-elt repository 'name)
+             (let ((path (agent-shell-cockpit-workspace-repository-path
+                          workspace repository)))
+               `(("Path" . ,(abbreviate-file-name path))
+                 ("Status" . ,(agent-shell-cockpit-git-description path))))
+             'repository repository))
+        (insert (propertize "No repositories\n"
+                            'face 'agent-shell-cockpit-secondary)))
+      (insert ?\n))))
 
 (defun agent-shell-cockpit-workspace-view--render ()
   "Render the current workspace detail buffer."

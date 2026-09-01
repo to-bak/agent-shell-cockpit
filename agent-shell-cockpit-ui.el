@@ -14,6 +14,10 @@
 (require 'magit-section)
 (require 'subr-x)
 (require 'transient)
+(require 'nerd-icons nil t)
+
+(declare-function agent-shell-cockpit-store-archive-directory
+                  "agent-shell-cockpit-store")
 
 (defcustom agent-shell-cockpit-buffer-name "*Agent Shell Cockpit*"
   "Name of the cockpit dashboard buffer."
@@ -156,7 +160,10 @@
 (defun agent-shell-cockpit-ui-header-context ()
   "Return the short context displayed in the Cockpit header line."
   (cond
-   ((derived-mode-p 'agent-shell-cockpit-archive-view-mode) "Archives")
+   ((derived-mode-p 'agent-shell-cockpit-archive-view-mode)
+    (format "Archives in %s"
+            (abbreviate-file-name
+             (agent-shell-cockpit-store-archive-directory))))
    ((derived-mode-p 'agent-shell-cockpit-workspace-view-mode)
     (format "Workspace · %s"
             (string-remove-prefix
@@ -183,6 +190,27 @@ WIDTH defaults to `agent-shell-cockpit-summary-width'."
     (if (> (string-width text) limit)
         (concat (truncate-string-to-width text (1- limit)) "…")
       text)))
+
+(defun agent-shell-cockpit-ui-icon (kind)
+  "Return a compact icon representing KIND.
+Use Nerd Icons when available, with portable glyphs as a fallback."
+  (pcase kind
+    ('agent
+     (if (fboundp 'nerd-icons-mdicon)
+         (nerd-icons-mdicon "nf-md-robot"
+                            :face 'agent-shell-cockpit-secondary)
+       "●"))
+    ('prompt
+     (if (fboundp 'nerd-icons-mdicon)
+         (nerd-icons-mdicon "nf-md-file_document_edit_outline"
+                            :face 'agent-shell-cockpit-secondary)
+       "✎"))
+    ('repository
+     (if (fboundp 'nerd-icons-codicon)
+         (nerd-icons-codicon "nf-cod-git_merge"
+                             :face 'agent-shell-cockpit-secondary)
+       "⑂"))
+    (_ "•")))
 
 (defun agent-shell-cockpit-ui-insert-detail (label value)
   "Insert an indented detail line with LABEL and VALUE."
