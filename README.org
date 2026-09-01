@@ -1,0 +1,111 @@
+#+TITLE: agent-shell-cockpit
+
+=agent-shell-cockpit= is a workspace-oriented dashboard for
+[[https://github.com/xenodium/agent-shell][agent-shell]].  It groups reusable prompt files, multiple local Git worktrees, and
+resumable agent sessions into one durable work item.
+
+* Status
+
+This package is an early MVP.  Workspace metadata is versioned, but its public
+commands and interface may still change before a MELPA submission.
+
+* Requirements
+
+- Emacs 29.1 or newer
+- =agent-shell= 0.71.3 or newer
+- Git for repository worktree operations
+
+* Installation
+
+Add the checkout to =load-path= and load the package:
+
+#+begin_src emacs-lisp
+  (use-package agent-shell-cockpit
+    :load-path "~/git/agent-shell-cockpit"
+    :after agent-shell
+    :bind (("C-c m" . agent-shell-cockpit)))
+#+end_src
+
+* Workflow
+
+1. Open =M-x agent-shell-cockpit=.
+2. Press =C-c C-n= and enter a directory name.  Cockpit creates a =prompts/=
+   directory containing an initial =prompt.org=; no separate title or ticket
+   questions are asked.
+3. Open the workspace and press =C-c C-a= to attach one or more local
+   repositories as Git worktrees.  Choose a new branch, existing branch, or
+   detached checkout.  New branches prompt for their start point using local
+   branches, remote branches, and tags, defaulting to main/current branch.
+4. Press =C-c C-s= for the configured default agent or =C-c C-c= to choose an
+   agent.  The agent starts at the aggregate workspace root.
+5. Reopen recorded sessions from the workspace detail view.  A
+   =[HISTORY]= row can be resumed with =RET= or =C-c C-r=; Cockpit starts the
+   recorded agent with its stored ACP session ID.
+6. Stop live agents and press =C-c C-x= to archive.  Cockpit refuses to archive
+   dirty worktrees, removes clean worktrees without deleting their branches,
+   and moves the remaining workspace record into =.archive=.
+
+Agent shells started elsewhere appear under *Unassigned agents*.  Press
+=C-c C-a= to attach one whose working directory is already inside a cockpit
+workspace.
+
+In the main dashboard, =C-j= and =C-k= move between rows and preview them on
+the right.  Workspace rows preview the complete workspace detail view; live
+agent rows preview the agent session buffer itself.
+Press =?= in either Cockpit view for all commands available in that context.
+
+* Storage
+
+#+begin_example
+~/.workspaces/example/
+├── prompts/
+│   ├── prompt.org
+│   └── review.org
+├── .agent-shell-cockpit/workspace.json
+└── repositories/
+#+end_example
+
+Files below =prompts/= belong to the user; add as many prompt files as the
+workspace needs.  =workspace.json= belongs to cockpit and contains only the
+schema version plus resumable ACP session references (agent ID, session ID, and
+an optional display title).  It does not duplicate transcripts maintained by
+the agent.  Workspace name, title, active/archive state, prompt paths,
+repositories, branches, and commits are derived from the directory layout,
+prompt files, and Git whenever Cockpit reads the workspace.
+* Configuration
+
+- =agent-shell-cockpit-workspace-directory= controls the active workspace
+  root and defaults to =~/.workspaces/=.
+- =agent-shell-cockpit-archive-directory= optionally places archives
+  elsewhere; nil means =.archive= below the active root.
+- =agent-shell-cockpit-prompts-directory-name= and
+  =agent-shell-cockpit-default-prompt-filename= define the prompt layout.
+- =agent-shell-cockpit-repositories-directory-name= defines where Cockpit
+  creates and discovers worktrees inside each workspace.
+- =agent-shell-cockpit-default-command= selects the default interactive agent
+  starter.
+- =agent-shell-cockpit-refresh-interval= controls automatic UI refresh.
+- =agent-shell-cockpit-width= controls the dashboard/preview split.
+
+* Recovery
+
+Invalid metadata remains visible in the dashboard as an error row.  Opening
+the row visits its JSON file for diagnosis.  =E= backs up invalid metadata and
+rebuilds a minimal record when explicit recovery is needed; session history
+remains only in that backup.  Repository state is rediscovered from the
+filesystem.  Cockpit writes metadata through
+a same-directory temporary file and atomic rename to minimize partial writes.
+Unknown schema versions are never rewritten automatically.
+
+If archival is interrupted after worktrees are removed, their Git branches
+remain in their source repositories.  The workspace prompts and metadata remain
+in either the active or archive directory and can be inspected normally.
+
+* Development
+
+Run =make check= for ERT, warning-free byte compilation, and Checkdoc.  Run
+=make lint= when =package-lint= is installed.
+
+* License
+
+MIT.  See =LICENSE=.

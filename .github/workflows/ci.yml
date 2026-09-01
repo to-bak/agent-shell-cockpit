@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        emacs_version: ["29.1", "30.2"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs_version }}
+      - name: Run isolated tests
+        run: make test
+      - name: Install compile and lint dependencies
+        run: |
+          emacs -Q --batch \
+            --eval "(require 'package)" \
+            --eval "(add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\") t)" \
+            --eval "(package-refresh-contents)" \
+            --eval "(package-install 'agent-shell)" \
+            --eval "(package-install 'package-lint)"
+      - name: Compile and check documentation
+        run: make compile checkdoc STRAIGHT_BUILD=/nonexistent
+      - name: Package lint
+        run: make lint STRAIGHT_BUILD=/nonexistent
