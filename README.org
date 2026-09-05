@@ -212,5 +212,4 @@ Run =make check= for ERT, warning-free byte compilation, and Checkdoc.  Run
 =make lint= when =package-lint= is installed.
 
 * License
-
 MIT.  See =LICENSE=.
