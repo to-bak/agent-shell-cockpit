@@ -4,8 +4,7 @@
 
 (ert-deftest agent-shell-cockpit-store-creates-round-trips-and-discovers ()
   (agent-shell-cockpit-test-with-root
-    (let* ((workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+    (let* ((workspace (agent-shell-cockpit-workspace-create :name "alpha"))
            (loaded (agent-shell-cockpit-store-read (map-elt workspace 'root))))
       (should (equal (map-elt loaded 'title) "alpha"))
       (should (equal (map-elt loaded 'name) "alpha"))
@@ -25,8 +24,7 @@
 
 (ert-deftest agent-shell-cockpit-store-persists-deliberate-metadata-subset ()
   (agent-shell-cockpit-test-with-root
-    (let* ((workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+    (let* ((workspace (agent-shell-cockpit-workspace-create :name "alpha"))
            (root (map-elt workspace 'root))
            (path (agent-shell-cockpit-store-metadata-path root)))
       (agent-shell-cockpit-store-set workspace 'createdAt "discard me")
@@ -77,18 +75,18 @@
 
 (ert-deftest agent-shell-cockpit-workspace-rejects-invalid-or-duplicate-name ()
   (agent-shell-cockpit-test-with-root
-    (should-error (agent-shell-cockpit-workspace-create
-                   :name "bad/name" :title "Bad") :type 'user-error)
-    (agent-shell-cockpit-workspace-create :name "alpha" :title "Alpha")
-    (should-error (agent-shell-cockpit-workspace-create
-                   :name "alpha" :title "Again") :type 'user-error)))
+    (should-error (agent-shell-cockpit-workspace-create :name "bad/name")
+                  :type 'user-error)
+    (agent-shell-cockpit-workspace-create :name "alpha")
+    (should-error (agent-shell-cockpit-workspace-create :name "alpha")
+                  :type 'user-error)))
 
 (ert-deftest agent-shell-cockpit-workspace-rolls-back-failed-creation ()
   (agent-shell-cockpit-test-with-root
     (cl-letf (((symbol-function 'agent-shell-cockpit-store-write)
                (lambda (_) (error "simulated write failure"))))
       (should-error
-       (agent-shell-cockpit-workspace-create :name "alpha" :title "Alpha")))
+       (agent-shell-cockpit-workspace-create :name "alpha")))
     (should-not (file-exists-p
                  (expand-file-name "alpha"
                                    agent-shell-cockpit-workspace-directory)))
@@ -102,8 +100,7 @@
 
 (ert-deftest agent-shell-cockpit-store-rejects-unknown-schema ()
   (agent-shell-cockpit-test-with-root
-    (let* ((workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+    (let* ((workspace (agent-shell-cockpit-workspace-create :name "alpha"))
            (path (agent-shell-cockpit-store-metadata-path
                   (map-elt workspace 'root))))
       (with-temp-buffer
@@ -119,8 +116,7 @@
 
 (ert-deftest agent-shell-cockpit-workspace-repair-backs-up-invalid-metadata ()
   (agent-shell-cockpit-test-with-root
-    (let* ((workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+    (let* ((workspace (agent-shell-cockpit-workspace-create :name "alpha"))
            (path (agent-shell-cockpit-store-metadata-path
                   (map-elt workspace 'root))))
       (with-temp-file path (insert "broken"))

@@ -5,7 +5,7 @@
 (ert-deftest agent-shell-cockpit-session-attaches-and-persists-id ()
   (agent-shell-cockpit-test-with-root
     (let* ((workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+                       :name "alpha"))
            (buffer (generate-new-buffer " *cockpit agent*"))
            (agent-shell-cockpit-test--buffers (list buffer)))
       (unwind-protect
@@ -28,7 +28,7 @@
 (ert-deftest agent-shell-cockpit-session-refuses-outside-attachment ()
   (agent-shell-cockpit-test-with-root
     (let ((workspace (agent-shell-cockpit-workspace-create
-                      :name "alpha" :title "Alpha"))
+                      :name "alpha"))
           (buffer (generate-new-buffer " *outside agent*")))
       (unwind-protect
           (with-current-buffer buffer
@@ -36,6 +36,27 @@
             (should-error
              (agent-shell-cockpit-session-attach buffer workspace)
              :type 'user-error))
+        (when (buffer-live-p buffer) (kill-buffer buffer))))))
+
+(ert-deftest agent-shell-cockpit-session-starts-at-workspace-directory ()
+  (agent-shell-cockpit-test-with-root
+    (let* ((workspace (agent-shell-cockpit-workspace-create
+                       :name "alpha"))
+           (agent-shell-cockpit-test--buffers nil)
+           buffer observed-directory
+           (command
+            (lambda ()
+              (interactive)
+              (setq observed-directory default-directory
+                    buffer (generate-new-buffer " *cockpit started agent*"))
+              (with-current-buffer buffer
+                (setq default-directory observed-directory))
+              (push buffer agent-shell-cockpit-test--buffers)
+              buffer)))
+      (unwind-protect
+          (progn
+            (agent-shell-cockpit-session-start workspace command)
+            (should (equal observed-directory (map-elt workspace 'root))))
         (when (buffer-live-p buffer) (kill-buffer buffer))))))
 
 (ert-deftest agent-shell-cockpit-session-returns-to-origin-buffer ()
@@ -58,7 +79,7 @@
 (ert-deftest agent-shell-cockpit-session-resumes-with-stored-agent-and-id ()
   (agent-shell-cockpit-test-with-root
     (let* ((workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+                       :name "alpha"))
            (session (list (cons 'agentId "codex")
                           (cons 'sessionId "session-1")
                           (cons 'title "Resume me")))
@@ -87,9 +108,9 @@
 (ert-deftest agent-shell-cockpit-dashboard-renders-workspace-and-unassigned ()
   (agent-shell-cockpit-test-with-root
     (let* ((alpha (agent-shell-cockpit-workspace-create
-                   :name "alpha" :title "Alpha"))
+                   :name "alpha"))
            (_beta (agent-shell-cockpit-workspace-create
-                   :name "beta" :title "Beta"))
+                   :name "beta"))
            (assigned (generate-new-buffer " *alpha agent*"))
            (unassigned (generate-new-buffer " *unassigned*")))
       (unwind-protect
@@ -153,7 +174,7 @@
 (ert-deftest agent-shell-cockpit-workspace-detail-buffer-renders ()
   (agent-shell-cockpit-test-with-root
     (let* ((workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+                       :name "alpha"))
            (detail (agent-shell-cockpit-workspace-view-buffer workspace)))
       (unwind-protect
           (with-current-buffer detail
@@ -167,9 +188,39 @@
             (should (string-match-p "Repositories" (buffer-string))))
         (when (buffer-live-p detail) (kill-buffer detail))))))
 
+(ert-deftest agent-shell-cockpit-workspace-repository-opener-is-configurable ()
+  (agent-shell-cockpit-test-with-root
+    (let* ((source (agent-shell-cockpit-test-make-repository
+                    (expand-file-name "source" test-root)))
+           (workspace (agent-shell-cockpit-workspace-create
+                       :name "alpha"))
+           (repository (agent-shell-cockpit-git-add-worktree
+                        :workspace workspace :source source :name "service"
+                        :mode 'detached :ref "HEAD"))
+           (expected (agent-shell-cockpit-workspace-repository-path
+                      workspace repository))
+           opened)
+      (with-temp-buffer
+        (agent-shell-cockpit-workspace-view-mode)
+        (setq agent-shell-cockpit-workspace-view--root
+              (map-elt workspace 'root))
+        (agent-shell-cockpit-workspace-view-refresh)
+        (goto-char (point-min))
+        (search-forward "service")
+        (let ((agent-shell-cockpit-repository-open-function
+               (lambda (directory) (setq opened directory))))
+          (agent-shell-cockpit-workspace-view-open))
+        (should (equal opened expected))))))
+
+(ert-deftest agent-shell-cockpit-workspace-source-selector-is-configurable ()
+  (let ((agent-shell-cockpit-repository-source-function
+         (lambda () "/tmp/source/")))
+    (should (equal (agent-shell-cockpit-workspace-view--source-directory)
+                   "/tmp/source/"))))
+
 (ert-deftest agent-shell-cockpit-dashboard-groups-collapse-but-rows-are-flat ()
   (agent-shell-cockpit-test-with-root
-    (agent-shell-cockpit-workspace-create :name "alpha" :title "Alpha")
+    (agent-shell-cockpit-workspace-create :name "alpha")
     (with-temp-buffer
       (agent-shell-cockpit-mode)
       (agent-shell-cockpit-dashboard-refresh)
@@ -187,7 +238,7 @@
 (ert-deftest agent-shell-cockpit-dashboard-workspace-summary-uses-icons ()
   (agent-shell-cockpit-test-with-root
     (let ((workspace (agent-shell-cockpit-workspace-create
-                      :name "alpha" :title "Alpha")))
+                      :name "alpha")))
       (cl-letf (((symbol-function 'agent-shell-cockpit-ui-icon)
                  (lambda (kind) (format "[%s]" kind))))
         (should
@@ -198,7 +249,7 @@
 (ert-deftest agent-shell-cockpit-archives-open-in-history-buffer ()
   (agent-shell-cockpit-test-with-root
     (agent-shell-cockpit-workspace-archive
-     (agent-shell-cockpit-workspace-create :name "alpha" :title "Alpha"))
+     (agent-shell-cockpit-workspace-create :name "alpha"))
     (with-temp-buffer
       (agent-shell-cockpit-mode)
       (agent-shell-cockpit-dashboard-refresh)
@@ -221,7 +272,7 @@
     (let* ((archived
             (agent-shell-cockpit-workspace-archive
              (agent-shell-cockpit-workspace-create
-              :name "alpha" :title "Alpha")))
+              :name "alpha")))
            (root (map-elt archived 'root)))
       (with-temp-buffer
         (agent-shell-cockpit-archive-view-mode)
@@ -257,7 +308,7 @@
 (ert-deftest agent-shell-cockpit-workspace-detail-renders-repositories-and-history ()
   (agent-shell-cockpit-test-with-root
     (let ((workspace (agent-shell-cockpit-workspace-create
-                      :name "alpha" :title "Alpha")))
+                      :name "alpha")))
       (agent-shell-cockpit-store-set
        workspace 'sessions
        (list (list (cons 'agentId "codex")
@@ -284,7 +335,7 @@
 (ert-deftest agent-shell-cockpit-workspace-detail-renders-unrecorded-live-agent ()
   (agent-shell-cockpit-test-with-root
     (let* ((workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+                       :name "alpha"))
            (agent (generate-new-buffer " *new live agent*")))
       (unwind-protect
           (let ((agent-shell-cockpit-test--buffers (list agent)))
@@ -310,7 +361,7 @@
 (ert-deftest agent-shell-cockpit-workspace-flattens-multiline-agent-title ()
   (agent-shell-cockpit-test-with-root
     (let* ((workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+                       :name "alpha"))
            (agent (generate-new-buffer " *multiline agent*")))
       (unwind-protect
           (let ((agent-shell-cockpit-test--buffers (list agent)))
@@ -385,7 +436,7 @@
 (ert-deftest agent-shell-cockpit-prompt-expands-file-inline ()
   (agent-shell-cockpit-test-with-root
     (let* ((workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+                       :name "alpha"))
            (prompt (expand-file-name
                     "prompt.org"
                     (agent-shell-cockpit-workspace-prompts-path workspace))))
@@ -421,7 +472,7 @@
 (ert-deftest agent-shell-cockpit-refresh-installs-visibility-indicators ()
   (agent-shell-cockpit-test-with-root
     (let ((workspace (agent-shell-cockpit-workspace-create
-                      :name "alpha" :title "Alpha")))
+                      :name "alpha")))
       (with-temp-file
           (expand-file-name
            "prompt.org"
@@ -546,7 +597,7 @@
 
 (ert-deftest agent-shell-cockpit-refresh-restores-unselected-window-point ()
   (agent-shell-cockpit-test-with-root
-    (agent-shell-cockpit-workspace-create :name "alpha" :title "Alpha")
+    (agent-shell-cockpit-workspace-create :name "alpha")
     (let* ((agent-shell-cockpit-refresh-interval nil)
            (cockpit (generate-new-buffer " *cockpit window*"))
            (other (generate-new-buffer " *other window*"))

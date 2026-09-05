@@ -11,11 +11,18 @@ commands and interface may still change before a MELPA submission.
 
 * Requirements
 
+Direct package dependencies:
+
 - Emacs 29.1 or newer
 - =agent-shell= 0.71.3 or newer
 - =magit-section= 4.0 or newer
 - =transient= 0.7 or newer
 - Git for repository worktree operations
+
+Emacs supplies the other libraries used directly by Cockpit: =dired=, =json=,
+=map=, =org-id=, =seq=, and =subr-x=.  =nerd-icons= and Evil are optional UI
+enhancements.  Magit and =project.el= are optional integrations configured by
+the user; Cockpit neither requires nor loads them.
 
 * Installation
 
@@ -37,7 +44,8 @@ Add the checkout to =load-path= and load the package:
 3. Open the workspace, press =?=, then =+= to attach a local repository as a
    Git worktree.  Choose a new branch, existing branch, or detached checkout.
    New branches prompt for their start point using local branches, remote
-   branches, and tags, defaulting to main/current branch.
+   branches, and tags, defaulting to main/current branch.  Cockpit does not
+   integrate with or depend on =project.el=.
 4. Press =s= for the default agent or =S= to choose one.  The agent starts at
    the aggregate workspace root.
 5. Reopen recorded sessions from the workspace detail view.  A
@@ -106,6 +114,14 @@ directory layout, prompt files, and Git whenever Cockpit reads the workspace.
   agent snapshots.
 - =agent-shell-cockpit-repositories-directory-name= defines where Cockpit
   creates and discovers worktrees inside each workspace.
+- =agent-shell-cockpit-repository-open-function= controls the primary action
+  for repository rows and defaults to =dired=.  Set it to =magit-status= when
+  Magit should open repositories instead.
+- =agent-shell-cockpit-repository-source-function= chooses the source
+  repository when creating a worktree and defaults to a plain directory
+  prompt.  It is called without arguments.  For example, Emacs 31 users can
+  set it to =project-prompt-project-dir= without making =project.el= a Cockpit
+  dependency.
 - =agent-shell-cockpit-default-command= selects the default interactive agent
   starter.
 - =agent-shell-cockpit-refresh-interval= controls automatic UI refresh.

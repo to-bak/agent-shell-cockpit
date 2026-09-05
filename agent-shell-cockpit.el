@@ -25,7 +25,6 @@
 (require 'agent-shell-cockpit-store)
 (require 'agent-shell-cockpit-workspace)
 (require 'agent-shell-cockpit-git)
-(require 'agent-shell-cockpit-project)
 (require 'agent-shell-cockpit-session)
 (require 'agent-shell-cockpit-ui)
 (require 'agent-shell-cockpit-dashboard)
@@ -96,8 +95,6 @@
 
 (with-eval-after-load 'evil
   (agent-shell-cockpit--evil-setup))
-
-(agent-shell-cockpit-project-enable)
 
 (provide 'agent-shell-cockpit)
 

@@ -1,4 +1,4 @@
-;;; agent-shell-cockpit-git-test.el --- Git and project tests -*- lexical-binding: t; -*-
+;;; agent-shell-cockpit-git-test.el --- Git worktree tests -*- lexical-binding: t; -*-
 
 (require 'agent-shell-cockpit-test-helper)
 
@@ -7,7 +7,7 @@
     (let* ((source (agent-shell-cockpit-test-make-repository
                     (expand-file-name "source" test-root)))
            (workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+                       :name "alpha"))
            (repository
             (agent-shell-cockpit-git-add-worktree
              :workspace workspace :source source :name "service"
@@ -18,9 +18,6 @@
       (should (equal (agent-shell-cockpit-test-git
                       worktree "branch" "--show-current")
                      "feature/alpha"))
-      (should (member (expand-file-name "README.md" worktree)
-                      (project-files (list 'agent-shell-cockpit
-                                           (map-elt workspace 'root)))))
       (agent-shell-cockpit-git-remove-worktree workspace repository)
       (should-not (file-exists-p worktree))
       (should (member "feature/alpha"
@@ -31,7 +28,7 @@
     (let* ((source (agent-shell-cockpit-test-make-repository
                     (expand-file-name "source" test-root)))
            (workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+                       :name "alpha"))
            (repository (agent-shell-cockpit-git-add-worktree
                         :workspace workspace :source source :name "service"
                         :mode 'detached :ref "HEAD"))
@@ -63,7 +60,7 @@
     (let* ((source (agent-shell-cockpit-test-make-repository
                     (expand-file-name "source" test-root)))
            (workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha")))
+                       :name "alpha")))
       (agent-shell-cockpit-test-git source "branch" "existing")
       (let* ((repository (agent-shell-cockpit-git-add-worktree
                           :workspace workspace :source source :name "service"
@@ -79,26 +76,12 @@
           :mode 'detached :ref "HEAD")
          :type 'user-error)))))
 
-(ert-deftest agent-shell-cockpit-project-finds-workspace-from-worktree ()
-  (agent-shell-cockpit-test-with-root
-    (let* ((source (agent-shell-cockpit-test-make-repository
-                    (expand-file-name "source" test-root)))
-           (workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
-           (repository (agent-shell-cockpit-git-add-worktree
-                        :workspace workspace :source source :name "service"
-                        :mode 'detached :ref "HEAD"))
-           (worktree (agent-shell-cockpit-workspace-repository-path
-                      workspace repository)))
-      (should (equal (agent-shell-cockpit-project-find worktree)
-                     (list 'agent-shell-cockpit (map-elt workspace 'root)))))))
-
 (ert-deftest agent-shell-cockpit-archive-removes-clean-worktrees ()
   (agent-shell-cockpit-test-with-root
     (let* ((source (agent-shell-cockpit-test-make-repository
                     (expand-file-name "source" test-root)))
            (workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+                       :name "alpha"))
            (_repository (agent-shell-cockpit-git-add-worktree
                          :workspace workspace :source source :name "service"
                          :mode 'new :branch "feature/archive" :ref "HEAD"))
@@ -116,7 +99,7 @@
     (let* ((source (agent-shell-cockpit-test-make-repository
                     (expand-file-name "source" test-root)))
            (workspace (agent-shell-cockpit-workspace-create
-                       :name "alpha" :title "Alpha"))
+                       :name "alpha"))
            (repository (agent-shell-cockpit-git-add-worktree
                         :workspace workspace :source source :name "service"
                         :mode 'detached :ref "HEAD"))

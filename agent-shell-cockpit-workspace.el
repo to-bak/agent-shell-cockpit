@@ -12,7 +12,6 @@
 
 (require 'map)
 (require 'org-id)
-(require 'project)
 (require 'seq)
 (require 'subr-x)
 (require 'agent-shell-cockpit-store)
@@ -35,14 +34,11 @@
     (user-error "Invalid workspace name: %s" name))
   name)
 
-(cl-defun agent-shell-cockpit-workspace-create (&key name title)
+(cl-defun agent-shell-cockpit-workspace-create (&key name)
   "Create and return a workspace named NAME.
-TITLE is accepted for compatibility; workspace titles are derived from user
-prompt files when present, and otherwise from NAME."
+Workspace titles are derived from user prompt files when present, and
+otherwise from NAME."
   (agent-shell-cockpit-workspace--validate-name name)
-  (setq title (or title name))
-  (when (string-empty-p (string-trim title))
-    (user-error "Workspace title cannot be empty"))
   (let* ((parent (file-name-as-directory
                   (expand-file-name agent-shell-cockpit-workspace-directory)))
          (target (expand-file-name name parent))
@@ -68,12 +64,9 @@ prompt files when present, and otherwise from NAME."
           (agent-shell-cockpit-store-write record)
           (rename-file temporary target)
           (setq temporary nil)
-         (agent-shell-cockpit-store-set
+          (agent-shell-cockpit-store-set
            record 'root (file-name-as-directory target))
           (setq record (agent-shell-cockpit-store-read target))
-          (ignore-errors
-            (project-remember-project (list 'agent-shell-cockpit
-                                            (map-elt record 'root))))
           record)
       (when (and temporary (file-directory-p temporary))
         (delete-directory temporary t)))))
@@ -212,7 +205,6 @@ Session metadata remains available only in the timestamped backup."
       (agent-shell-cockpit-git-remove-worktree workspace repository))
     (make-directory archive-root t)
     (rename-file old-root destination)
-    (ignore-errors (project-forget-project old-root))
     (agent-shell-cockpit-store-read destination)))
 
 (defun agent-shell-cockpit-workspace-delete-archive (workspace)

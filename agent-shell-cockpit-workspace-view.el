@@ -12,7 +12,6 @@
 
 (require 'dired)
 (require 'map)
-(require 'project)
 (require 'seq)
 (require 'subr-x)
 (require 'transient)
@@ -26,6 +25,23 @@
 (declare-function agent-shell-cockpit "agent-shell-cockpit-dashboard")
 (defvar-local agent-shell-cockpit-workspace-view--root nil
   "Workspace root displayed in the current detail buffer.")
+
+(defcustom agent-shell-cockpit-repository-open-function #'dired
+  "Function used to open a repository from a workspace view.
+The function receives the repository directory as its sole argument."
+  :type 'function
+  :group 'agent-shell-cockpit)
+
+(defun agent-shell-cockpit-read-source-directory ()
+  "Prompt for and return a local source repository directory."
+  (read-directory-name "Source repository: "))
+
+(defcustom agent-shell-cockpit-repository-source-function
+  #'agent-shell-cockpit-read-source-directory
+  "Function used to choose a source repository for a new worktree.
+The function is called without arguments and must return a directory."
+  :type 'function
+  :group 'agent-shell-cockpit)
 
 (defcustom agent-shell-cockpit-workspace-sections-hook
   '(agent-shell-cockpit-workspace-insert-agents
@@ -305,8 +321,9 @@ PROMPTS is the list of prompt files to render."
        nil)
       ('prompt (find-file object))
       ('repository
-       (dired (agent-shell-cockpit-workspace-repository-path
-               workspace object)))
+       (funcall agent-shell-cockpit-repository-open-function
+                (agent-shell-cockpit-workspace-repository-path
+                 workspace object)))
       ('live-session (agent-shell-cockpit-session-visit object))
       ('session-history
        (switch-to-buffer
@@ -321,14 +338,7 @@ PROMPTS is the list of prompt files to render."
 
 (defun agent-shell-cockpit-workspace-view--source-directory ()
   "Prompt for a local source repository directory."
-  (let* ((roots (seq-filter #'file-directory-p
-                            (project-known-project-roots)))
-         (manual "[Choose another directory]")
-         (choice (completing-read "Source repository: "
-                                  (cons manual roots) nil t)))
-    (if (equal choice manual)
-        (read-directory-name "Source repository: ")
-      choice)))
+  (funcall agent-shell-cockpit-repository-source-function))
 
 (defun agent-shell-cockpit-add-worktree ()
   "Add a Git worktree using a Magit-like branch and start-point flow."
