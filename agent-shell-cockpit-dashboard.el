@@ -14,7 +14,9 @@
 (require 'seq)
 (require 'subr-x)
 (require 'transient)
+(require 'agent-shell-cockpit-agent)
 (require 'agent-shell-cockpit-session)
+(require 'agent-shell-cockpit-skills)
 (require 'agent-shell-cockpit-store)
 (require 'agent-shell-cockpit-ui)
 (require 'agent-shell-cockpit-workspace)
@@ -72,42 +74,17 @@ Each function receives WORKSPACES and AGENTS."
   "Return an icon-based resource summary for WORKSPACE."
   (let ((agents (length
                  (agent-shell-cockpit-session-live-buffers workspace)))
-        (prompts (length
-                  (agent-shell-cockpit-workspace-prompt-paths workspace)))
+        (contexts (length
+                   (agent-shell-cockpit-workspace-context-paths workspace)))
         (repositories
          (length
           (agent-shell-cockpit-workspace-active-repositories workspace))))
     (propertize
      (format "%d %s  %d %s  %d %s"
              agents (agent-shell-cockpit-ui-icon 'agent)
-             prompts (agent-shell-cockpit-ui-icon 'prompt)
+             contexts (agent-shell-cockpit-ui-icon 'context)
              repositories (agent-shell-cockpit-ui-icon 'repository))
      'face 'agent-shell-cockpit-secondary)))
-
-(defun agent-shell-cockpit-dashboard--insert-session (buffer &optional workspace)
-  "Insert live agent BUFFER with a preview for optional WORKSPACE."
-  (let* ((status (agent-shell-cockpit-session-status buffer))
-         (directory (buffer-local-value 'default-directory buffer))
-         (kind (if workspace 'workspace-session 'session))
-         (name (buffer-name buffer)))
-    (magit-insert-section
-        (agent-shell-cockpit-section buffer t :kind kind :object buffer)
-      (magit-insert-heading
-        (concat (propertize
-                 (format "%-28s"
-                         (string-trim name "\\*+" "\\*+"))
-                 'face 'default)
-                (agent-shell-cockpit-ui-status-label status)
-                "  "
-                (propertize
-                 (if workspace
-                     (agent-shell-cockpit-ui-one-line
-                      (map-elt workspace 'title) 24)
-                   (agent-shell-cockpit-ui-one-line
-                    (abbreviate-file-name directory) 24))
-                 'face 'agent-shell-cockpit-secondary)))
-      (magit-insert-section-body
-        (agent-shell-cockpit-ui-insert-agent-preview buffer)))))
 
 (defun agent-shell-cockpit-dashboard-insert-agents (_workspaces agents)
   "Insert the live AGENTS section."
@@ -120,8 +97,11 @@ Each function receives WORKSPACES and AGENTS."
       (if agents
           (dolist (buffer
                    (agent-shell-cockpit-dashboard--sorted-sessions agents))
-            (agent-shell-cockpit-dashboard--insert-session
-             buffer (agent-shell-cockpit-session-workspace buffer)))
+            (let ((workspace
+                   (agent-shell-cockpit-session-workspace buffer)))
+              (agent-shell-cockpit-agent-insert-live
+               buffer workspace
+               (if workspace 'workspace-session 'session) t)))
         (insert (propertize "No live agents\n"
                             'face 'agent-shell-cockpit-secondary)))
       (insert ?\n))))
@@ -200,28 +180,19 @@ Each function receives WORKSPACES and AGENTS."
                      :name name)))
     (agent-shell-cockpit-dashboard-refresh)
     (dired-other-window
-     (agent-shell-cockpit-workspace-prompts-path workspace))))
+     (agent-shell-cockpit-workspace-context-path workspace))))
 
-(defun agent-shell-cockpit-edit-prompt ()
-  "Select and edit a prompt in the selected workspace."
+(defun agent-shell-cockpit-edit-context ()
+  "Select and edit a context file in the selected workspace."
   (interactive)
-  (agent-shell-cockpit-workspace-edit-prompt
+  (agent-shell-cockpit-workspace-edit-context
    (agent-shell-cockpit-dashboard-selected-workspace)))
 
 (defun agent-shell-cockpit-start-agent ()
-  "Start the default agent in the selected workspace."
+  "Configure launch skills, then choose and start an agent."
   (interactive)
-  (agent-shell-cockpit-session-start-default
+  (agent-shell-cockpit-skills-launch
    (agent-shell-cockpit-dashboard-selected-workspace)))
-
-(defun agent-shell-cockpit-start-agent-select ()
-  "Choose and start an agent in the selected workspace."
-  (interactive)
-  (agent-shell-cockpit-session-start-select
-   (agent-shell-cockpit-dashboard-selected-workspace)))
-
-(defalias 'agent-shell-cockpit-create #'agent-shell-cockpit-start-agent)
-(defalias 'agent-shell-cockpit-create-new #'agent-shell-cockpit-start-agent-select)
 
 (defun agent-shell-cockpit-attach-session ()
   "Attach the selected unassigned session to a compatible workspace."
@@ -251,17 +222,6 @@ Each function receives WORKSPACES and AGENTS."
       (agent-shell-cockpit-workspace-archive workspace)
       (agent-shell-cockpit-dashboard-refresh))))
 
-(defun agent-shell-cockpit-kill ()
-  "Kill the live agent session at point after confirmation."
-  (interactive)
-  (unless (memq (agent-shell-cockpit-ui-object-type-at-point)
-                '(session workspace-session))
-    (user-error "Point is not on a live agent session"))
-  (let ((buffer (agent-shell-cockpit-ui-object-at-point)))
-    (when (yes-or-no-p (format "Kill agent session %s? " (buffer-name buffer)))
-      (let ((kill-buffer-query-functions nil)) (kill-buffer buffer))
-      (agent-shell-cockpit-dashboard-refresh))))
-
 (defun agent-shell-cockpit-repair-workspace ()
   "Repair invalid workspace metadata at point after confirmation."
   (interactive)
@@ -287,15 +247,6 @@ Each function receives WORKSPACES and AGENTS."
   (memq (agent-shell-cockpit-ui-object-type-at-point)
         '(session workspace-session)))
 
-(defun agent-shell-cockpit-dashboard-allow-once ()
-  "Allow the live agent's latest pending permission request once."
-  (interactive)
-  (unless (agent-shell-cockpit-dashboard--live-agent-at-point-p)
-    (user-error "Point is not on a live agent"))
-  (let ((buffer (agent-shell-cockpit-ui-object-at-point)))
-    (agent-shell-cockpit-session-allow-once buffer)
-    (agent-shell-cockpit-dashboard-refresh)))
-
 (defun agent-shell-cockpit-dashboard--invalid-at-point-p ()
   "Return non-nil when point represents invalid workspace metadata."
   (let ((object (agent-shell-cockpit-ui-object-at-point)))
@@ -311,7 +262,7 @@ Each function receives WORKSPACES and AGENTS."
   "Invoke a Cockpit dashboard command from the available commands."
   ["Workspace and agent commands"
    [("w" "Create workspace" agent-shell-cockpit-create-workspace)
-    ("e" "Edit prompt" agent-shell-cockpit-edit-prompt
+    ("e" "Edit context" agent-shell-cockpit-edit-context
      :inapt-if-not agent-shell-cockpit-dashboard--workspace-at-point-p)
     ("A" "Archive workspace" agent-shell-cockpit-archive-workspace
      :inapt-if-not agent-shell-cockpit-dashboard--workspace-at-point-p)
@@ -319,34 +270,30 @@ Each function receives WORKSPACES and AGENTS."
      :inapt-if-not agent-shell-cockpit-dashboard--invalid-at-point-p)]
    [("s" "Start agent" agent-shell-cockpit-start-agent
      :inapt-if-not agent-shell-cockpit-dashboard--workspace-at-point-p)
-    ("S" "Start selected agent" agent-shell-cockpit-start-agent-select
-     :inapt-if-not agent-shell-cockpit-dashboard--workspace-at-point-p)
-    ("a" "Attach agent" agent-shell-cockpit-attach-session
+    ("+" "Attach agent" agent-shell-cockpit-attach-session
      :inapt-if-not agent-shell-cockpit-dashboard--unassigned-at-point-p)
-    ("Y" "Allow permission once" agent-shell-cockpit-dashboard-allow-once
+    ("a" "Agent actions" agent-shell-cockpit-agent-actions
      :inapt-if-not agent-shell-cockpit-dashboard--live-agent-at-point-p)
-    ("K" "Kill agent" agent-shell-cockpit-kill
+    ("K" "Kill agent" agent-shell-cockpit-agent-kill
      :inapt-if-not agent-shell-cockpit-dashboard--live-agent-at-point-p)]
    [("l" "Archives" agent-shell-cockpit-archive-dispatch)]]
   ["Essential commands"
-   [("g" "       Refresh current buffer" agent-shell-cockpit-refresh)
+   [("r" "       Refresh current buffer" agent-shell-cockpit-refresh)
     ("q" "       Bury current buffer" agent-shell-cockpit-quit)
     ("<tab>" "   Toggle section at point" agent-shell-cockpit-toggle-section)
     ("<return>" "Visit thing at point" agent-shell-cockpit-open)]
    [("n" "       Next section" agent-shell-cockpit-next)
-    ("p" "       Previous section" agent-shell-cockpit-previous)
-    ("C-x m" "Show all key bindings" describe-mode)]])
+    ("p" "       Previous section" agent-shell-cockpit-previous)]])
 
 (defvar-keymap agent-shell-cockpit-mode-map
   :parent agent-shell-cockpit-ui-mode-map
   "w" #'agent-shell-cockpit-create-workspace
-  "e" #'agent-shell-cockpit-edit-prompt
+  "e" #'agent-shell-cockpit-edit-context
   "s" #'agent-shell-cockpit-start-agent
-  "S" #'agent-shell-cockpit-start-agent-select
-  "a" #'agent-shell-cockpit-attach-session
+  "+" #'agent-shell-cockpit-attach-session
+  "a" #'agent-shell-cockpit-agent-actions
   "A" #'agent-shell-cockpit-archive-workspace
-  "Y" #'agent-shell-cockpit-dashboard-allow-once
-  "K" #'agent-shell-cockpit-kill
+  "K" #'agent-shell-cockpit-agent-kill
   "l" #'agent-shell-cockpit-archive-dispatch)
 
 (define-derived-mode agent-shell-cockpit-mode agent-shell-cockpit-ui-mode
@@ -357,17 +304,24 @@ Each function receives WORKSPACES and AGENTS."
               agent-shell-cockpit-ui--open-function
               #'agent-shell-cockpit-dashboard-open
               agent-shell-cockpit-ui--dispatch-function
-              #'agent-shell-cockpit-dashboard-dispatch))
+              #'agent-shell-cockpit-dashboard-dispatch)
+  (agent-shell-cockpit-agent-preview-mode 1))
 
 ;;;###autoload
 (defun agent-shell-cockpit ()
   "Open the agent-shell cockpit workspace dashboard."
   (interactive)
-  (let ((buffer (get-buffer-create agent-shell-cockpit-buffer-name)))
+  (let ((origin (current-buffer))
+        (buffer (get-buffer-create agent-shell-cockpit-buffer-name)))
     (setq agent-shell-cockpit--buffer buffer)
     (switch-to-buffer buffer)
     (unless (derived-mode-p 'agent-shell-cockpit-mode)
       (agent-shell-cockpit-mode))
+    (unless (or (eq origin buffer)
+                (with-current-buffer origin
+                  (or (derived-mode-p 'agent-shell-cockpit-ui-mode)
+                      (derived-mode-p 'agent-shell-mode))))
+      (setq agent-shell-cockpit-ui-return-buffer origin))
     (agent-shell-cockpit-dashboard-refresh)))
 
 (provide 'agent-shell-cockpit-dashboard)

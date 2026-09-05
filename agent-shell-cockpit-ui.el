@@ -18,6 +18,8 @@
 
 (declare-function agent-shell-cockpit-store-archive-directory
                   "agent-shell-cockpit-store")
+(declare-function agent-shell-cockpit-agent-preview-close
+                  "agent-shell-cockpit-agent")
 
 (defcustom agent-shell-cockpit-buffer-name "*Agent Shell Cockpit*"
   "Name of the cockpit dashboard buffer."
@@ -32,11 +34,6 @@
 (defcustom agent-shell-cockpit-summary-width 72
   "Maximum display width of a Cockpit row heading."
   :type 'integer
-  :group 'agent-shell-cockpit)
-
-(defcustom agent-shell-cockpit-agent-preview-lines 12
-  "Maximum number of recent agent-buffer lines shown in an expanded row."
-  :type 'natnum
   :group 'agent-shell-cockpit)
 
 (defface agent-shell-cockpit-title
@@ -92,27 +89,9 @@
   "Face for idle and unknown items."
   :group 'agent-shell-cockpit)
 
-(defface agent-shell-cockpit-prompt-preview
+(defface agent-shell-cockpit-context-preview
   '((t :inherit (fixed-pitch magit-section-highlight) :extend t))
-  "Face for expanded prompt file contents."
-  :group 'agent-shell-cockpit)
-
-(defface agent-shell-cockpit-agent-preview
-  '((((class color) (background dark))
-     :inherit fixed-pitch :background "#3c3836" :extend t)
-    (((class color) (background light))
-     :inherit fixed-pitch :background "#f0f1f2" :extend t)
-    (t :inherit (fixed-pitch magit-section-highlight) :extend t))
-  "Face for an expanded live agent-buffer snapshot."
-  :group 'agent-shell-cockpit)
-
-(defface agent-shell-cockpit-agent-preview-heading
-  '((((class color) (background dark))
-     :background "#504945" :weight semi-bold :extend t)
-    (((class color) (background light))
-     :background "#d8dee4" :weight semi-bold :extend t)
-    (t :inherit magit-section-heading :extend t))
-  "Face for the heading above a live agent-buffer snapshot."
+  "Face for expanded context file contents."
   :group 'agent-shell-cockpit)
 
 (defconst agent-shell-cockpit-ui--status-spec
@@ -128,6 +107,8 @@
 (defvar-local agent-shell-cockpit-ui--open-function nil)
 (defvar-local agent-shell-cockpit-ui--dispatch-function nil)
 (defvar-local agent-shell-cockpit-ui--refresh-timer nil)
+(defvar-local agent-shell-cockpit-ui-return-buffer nil
+  "Logical parent buffer returned to when quitting the current Cockpit view.")
 
 (defconst agent-shell-cockpit-ui-header-line-format
   '(" "
@@ -144,11 +125,6 @@
   ((kind :initarg :kind :initform nil)
    (object :initarg :object :initform nil))
   "Section representing a Cockpit group or domain object.")
-
-(defun agent-shell-cockpit-help ()
-  "Show the command dispatcher for the current Cockpit view."
-  (interactive)
-  (agent-shell-cockpit-dispatch))
 
 (defun agent-shell-cockpit-ui-status-label (status)
   "Return a compact colored text label for STATUS."
@@ -176,10 +152,6 @@
                       'face 'magit-section-heading)
           (agent-shell-cockpit-ui-one-line value) "\n"))
 
-(defun agent-shell-cockpit-ui-status-rank (status)
-  "Return display rank for STATUS."
-  (or (nth 3 (assq status agent-shell-cockpit-ui--status-spec)) 99))
-
 (defun agent-shell-cockpit-ui-one-line (value &optional width)
   "Return VALUE as one line, truncated to WIDTH display columns.
 WIDTH defaults to `agent-shell-cockpit-summary-width'."
@@ -200,7 +172,7 @@ Use Nerd Icons when available, with portable glyphs as a fallback."
          (nerd-icons-mdicon "nf-md-robot"
                             :face 'agent-shell-cockpit-secondary)
        "●"))
-    ('prompt
+    ('context
      (if (fboundp 'nerd-icons-mdicon)
          (nerd-icons-mdicon "nf-md-file_document_edit_outline"
                             :face 'agent-shell-cockpit-secondary)
@@ -219,66 +191,6 @@ Use Nerd Icons when available, with portable glyphs as a fallback."
                       'face 'agent-shell-cockpit-secondary)
           (agent-shell-cockpit-ui-one-line value 120)
           "\n"))
-
-(defun agent-shell-cockpit-ui--buffer-tail (buffer)
-  "Return a safely styled recent tail of live BUFFER.
-Only `font-lock-face' is copied; interactive and internal buffer text
-properties are deliberately discarded."
-  (when (buffer-live-p buffer)
-    (with-current-buffer buffer
-      (save-restriction
-        (widen)
-        (save-excursion
-          (goto-char (point-max))
-          (skip-chars-backward "\n\r\t ")
-          (let ((end (point)))
-            (forward-line (- agent-shell-cockpit-agent-preview-lines))
-            (let* ((source (buffer-substring (point) end))
-                   (text (substring-no-properties source))
-                   (position 0)
-                   (length (length source)))
-              (while (< position length)
-                (let ((next (or (next-single-property-change
-                                 position 'font-lock-face source)
-                                length))
-                      (face (get-text-property
-                             position 'font-lock-face source)))
-                  (when face
-                    (put-text-property
-                     position next 'font-lock-face face text))
-                  (setq position next)))
-              (string-trim text))))))))
-
-(defun agent-shell-cockpit-ui--add-preview-background (start end)
-  "Add the Cockpit preview background from START to END.
-Preserve any existing agent-shell foreground and emphasis faces."
-  (let ((position start))
-    (while (< position end)
-      (let* ((existing (get-text-property position 'font-lock-face))
-             (next (or (next-single-property-change
-                        position 'font-lock-face nil end)
-                       end))
-             (combined
-              (cond
-               ((null existing) 'agent-shell-cockpit-agent-preview)
-               ((and (listp existing) (not (keywordp (car existing))))
-                (cons 'agent-shell-cockpit-agent-preview existing))
-               (t (list 'agent-shell-cockpit-agent-preview existing)))))
-        (put-text-property position next 'font-lock-face combined)
-        (setq position next)))))
-
-(defun agent-shell-cockpit-ui-insert-agent-preview (buffer)
-  "Insert a bounded snapshot of live agent BUFFER."
-  (let ((heading-start (point)))
-    (insert "  Preview" ?\n)
-    (add-text-properties
-     heading-start (point)
-     '(font-lock-face agent-shell-cockpit-agent-preview-heading)))
-  (let ((text (agent-shell-cockpit-ui--buffer-tail buffer))
-        (start (point)))
-    (insert (if (string-empty-p (or text "")) "No output yet" text) ?\n)
-    (indent-rigidly start (point) 2)
-    (agent-shell-cockpit-ui--add-preview-background start (point))))
 
 (defun agent-shell-cockpit-ui-object-at-point ()
   "Return the cockpit object represented at point."
@@ -395,9 +307,15 @@ Preserve section visibility and the position of point."
   (funcall agent-shell-cockpit-ui--dispatch-function))
 
 (defun agent-shell-cockpit-quit ()
-  "Close the Cockpit view."
+  "Return to the logical parent of the current Cockpit view."
   (interactive)
-  (quit-window))
+  (when (fboundp 'agent-shell-cockpit-agent-preview-close)
+    (agent-shell-cockpit-agent-preview-close))
+  (if (and (buffer-live-p agent-shell-cockpit-ui-return-buffer)
+           (not (eq agent-shell-cockpit-ui-return-buffer
+                    (current-buffer))))
+      (switch-to-buffer agent-shell-cockpit-ui-return-buffer)
+    (quit-window)))
 
 (defun agent-shell-cockpit-ui--timer-refresh (buffer)
   "Refresh visible cockpit BUFFER."
@@ -429,7 +347,7 @@ Preserve section visibility and the position of point."
   "C-p" #'agent-shell-cockpit-previous
   "n" #'agent-shell-cockpit-next
   "p" #'agent-shell-cockpit-previous
-  "g" #'agent-shell-cockpit-refresh
+  "r" #'agent-shell-cockpit-refresh
   "?" #'agent-shell-cockpit-dispatch
   "q" #'agent-shell-cockpit-quit)
 

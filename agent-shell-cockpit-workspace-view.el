@@ -15,8 +15,10 @@
 (require 'seq)
 (require 'subr-x)
 (require 'transient)
+(require 'agent-shell-cockpit-agent)
 (require 'agent-shell-cockpit-git)
 (require 'agent-shell-cockpit-session)
+(require 'agent-shell-cockpit-skills)
 (require 'agent-shell-cockpit-store)
 (require 'agent-shell-cockpit-ui)
 (require 'agent-shell-cockpit-workspace)
@@ -45,10 +47,10 @@ The function is called without arguments and must return a directory."
 
 (defcustom agent-shell-cockpit-workspace-sections-hook
   '(agent-shell-cockpit-workspace-insert-agents
-    agent-shell-cockpit-workspace-insert-prompts
+    agent-shell-cockpit-workspace-insert-context
     agent-shell-cockpit-workspace-insert-repositories)
   "Hook of functions that insert workspace detail sections.
-Each function receives WORKSPACE, LIVE-SESSIONS, HISTORY, PROMPTS,
+Each function receives WORKSPACE, LIVE-SESSIONS, HISTORY, CONTEXTS,
 and REPOSITORIES."
   :type 'hook
   :group 'agent-shell-cockpit)
@@ -86,10 +88,8 @@ When NON-COLLAPSIBLE is non-nil, omit the expandable detail body."
           (magit-insert-heading heading)
           (magit-insert-section-body
             (pcase type
-              ('prompt
-               (agent-shell-cockpit-workspace-view--insert-prompt-body object))
-              ('live-session
-               (agent-shell-cockpit-ui-insert-agent-preview object))
+              ('context-file
+               (agent-shell-cockpit-workspace-view--insert-context-body object))
               (_
                (if (listp details)
                    (dolist (detail details)
@@ -101,8 +101,8 @@ When NON-COLLAPSIBLE is non-nil, omit the expandable detail body."
                           'face 'agent-shell-cockpit-secondary)
                          "\n"))))))))))
 
-(defun agent-shell-cockpit-workspace-view--insert-prompt-body (path)
-  "Insert prompt file PATH as a section body."
+(defun agent-shell-cockpit-workspace-view--insert-context-body (path)
+  "Insert context file PATH as a section body."
   (agent-shell-cockpit-ui-insert-detail
    "File" (abbreviate-file-name path))
   (condition-case error-data
@@ -123,8 +123,8 @@ When NON-COLLAPSIBLE is non-nil, omit the expandable detail body."
 (defun agent-shell-cockpit-workspace-view--fontified-file (path)
   "Return PATH's contents fontified using its normal major mode.
 File-local variables and mode hooks are not run.  Only face properties
-are retained, with the prompt-preview face layered underneath them."
-  (let ((source (generate-new-buffer "cockpit-prompt-preview")))
+are retained, with the context-preview face layered underneath them."
+  (let ((source (generate-new-buffer "cockpit-context-preview")))
     (unwind-protect
         (with-current-buffer source
           (let ((buffer-file-name path)
@@ -192,7 +192,7 @@ outside the font-lock lifecycle of the cockpit buffer."
          position next '(face font-lock-face))
         (setq position next))))
   (add-text-properties
-   start end '(font-lock-face agent-shell-cockpit-prompt-preview)))
+   start end '(font-lock-face agent-shell-cockpit-context-preview)))
 
 (defun agent-shell-cockpit-workspace-view--live-session-for (session workspace)
   "Return live buffer matching SESSION in WORKSPACE."
@@ -206,8 +206,8 @@ outside the font-lock lifecycle of the cockpit buffer."
    (agent-shell-cockpit-session-live-buffers workspace)))
 
 (defun agent-shell-cockpit-workspace-insert-agents
-    (_workspace live-sessions history _prompts _repositories)
-  "Insert agent sections from LIVE-SESSIONS and HISTORY."
+    (workspace live-sessions history _contexts _repositories)
+  "Insert WORKSPACE agent sections from LIVE-SESSIONS and HISTORY."
   (magit-insert-section
       (agent-shell-cockpit-section 'agents nil :kind 'group)
     (magit-insert-heading
@@ -219,43 +219,36 @@ outside the font-lock lifecycle of the cockpit buffer."
       (if (or live-sessions history)
           (progn
             (dolist (live live-sessions)
-              (agent-shell-cockpit-workspace-view--insert-row
-               (with-current-buffer live
-                 (agent-shell-cockpit-session--title))
-               nil 'live-session live
-               (agent-shell-cockpit-session-status live)))
+              (agent-shell-cockpit-agent-insert-live
+               live workspace 'live-session))
             (dolist (session history)
-              (agent-shell-cockpit-workspace-view--insert-row
-               (or (map-elt session 'title)
-                   (map-elt session 'sessionId))
-               `(("Agent" . ,(map-elt session 'agentId))
-                 ("Session" . ,(map-elt session 'sessionId)))
-               'session-history session 'history t)))
+              (agent-shell-cockpit-agent-insert-history
+               session workspace)))
         (insert (propertize "No recorded agents\n"
                             'face 'agent-shell-cockpit-secondary)))
       (insert ?\n))))
 
-(defun agent-shell-cockpit-workspace-insert-prompts
-    (workspace _live-sessions _history prompts _repositories)
-  "Render prompt-file sections for WORKSPACE.
-PROMPTS is the list of prompt files to render."
+(defun agent-shell-cockpit-workspace-insert-context
+    (workspace _live-sessions _history contexts _repositories)
+  "Render context-file sections for WORKSPACE.
+CONTEXTS is the list of context files to render."
   (magit-insert-section
-      (agent-shell-cockpit-section 'prompts nil :kind 'group)
+      (agent-shell-cockpit-section 'contexts nil :kind 'group)
     (magit-insert-heading
-      (propertize (format "Prompts (%d)" (length prompts))
+      (propertize (format "Context (%d)" (length contexts))
                   'font-lock-face 'magit-section-heading))
     (magit-insert-section-body
-      (if prompts
-          (dolist (prompt prompts)
+      (if contexts
+          (dolist (context contexts)
             (agent-shell-cockpit-workspace-view--insert-row
-             (agent-shell-cockpit-workspace-prompt-name workspace prompt)
-             (abbreviate-file-name prompt) 'prompt prompt))
-        (insert (propertize "No prompts\n"
+             (agent-shell-cockpit-workspace-context-name workspace context)
+             (abbreviate-file-name context) 'context-file context))
+        (insert (propertize "No context files\n"
                             'face 'agent-shell-cockpit-secondary)))
       (insert ?\n))))
 
 (defun agent-shell-cockpit-workspace-insert-repositories
-    (workspace _live-sessions _history _prompts repositories)
+    (workspace _live-sessions _history _contexts repositories)
   "Insert REPOSITORIES for WORKSPACE."
   (magit-insert-section
       (agent-shell-cockpit-section 'repositories nil :kind 'group)
@@ -282,7 +275,7 @@ PROMPTS is the list of prompt files to render."
          (repositories
           (agent-shell-cockpit-workspace-active-repositories workspace))
          (sessions (map-elt workspace 'sessions))
-         (prompts (agent-shell-cockpit-workspace-prompt-paths workspace))
+         (contexts (agent-shell-cockpit-workspace-context-paths workspace))
          (live-sessions
           (agent-shell-cockpit-session-live-buffers workspace))
          (history
@@ -303,7 +296,7 @@ PROMPTS is the list of prompt files to render."
        "Root" (abbreviate-file-name (map-elt workspace 'root)))
       (insert ?\n)
       (magit-run-section-hook 'agent-shell-cockpit-workspace-sections-hook
-                              workspace live-sessions history prompts
+                              workspace live-sessions history contexts
                               repositories))))
 
 (defun agent-shell-cockpit-workspace-view-refresh ()
@@ -319,7 +312,7 @@ PROMPTS is the list of prompt files to render."
     (pcase type
       ((or 'root 'group)
        nil)
-      ('prompt (find-file object))
+      ('context-file (find-file object))
       ('repository
        (funcall agent-shell-cockpit-repository-open-function
                 (agent-shell-cockpit-workspace-repository-path
@@ -330,10 +323,10 @@ PROMPTS is the list of prompt files to render."
         (agent-shell-cockpit-session-resume workspace object)))
       (_ (user-error "Point is not on a workspace item")))))
 
-(defun agent-shell-cockpit-workspace-view-edit-prompt ()
-  "Select and edit a prompt in the displayed workspace."
+(defun agent-shell-cockpit-workspace-view-edit-context ()
+  "Select and edit a context file in the displayed workspace."
   (interactive)
-  (agent-shell-cockpit-workspace-edit-prompt
+  (agent-shell-cockpit-workspace-edit-context
    (agent-shell-cockpit-workspace-view--workspace)))
 
 (defun agent-shell-cockpit-workspace-view--source-directory ()
@@ -390,25 +383,10 @@ PROMPTS is the list of prompt files to render."
       (agent-shell-cockpit-workspace-view-refresh))))
 
 (defun agent-shell-cockpit-workspace-view-start-agent ()
-  "Start the default agent in the displayed workspace."
+  "Configure launch skills, then choose and start an agent."
   (interactive)
-  (agent-shell-cockpit-session-start-default
+  (agent-shell-cockpit-skills-launch
    (agent-shell-cockpit-workspace-view--workspace)))
-
-(defun agent-shell-cockpit-workspace-view-start-agent-select ()
-  "Choose and start an agent in the displayed workspace."
-  (interactive)
-  (agent-shell-cockpit-session-start-select
-   (agent-shell-cockpit-workspace-view--workspace)))
-
-(defun agent-shell-cockpit-resume-session ()
-  "Resume the session-history row at point."
-  (interactive)
-  (unless (eq (agent-shell-cockpit-ui-object-type-at-point) 'session-history)
-    (user-error "Point is not on resumable session history"))
-  (agent-shell-cockpit-session-resume
-   (agent-shell-cockpit-workspace-view--workspace)
-   (agent-shell-cockpit-ui-object-at-point)))
 
 (defun agent-shell-cockpit-workspace-view-archive ()
   "Archive the displayed workspace after confirmation."
@@ -422,24 +400,18 @@ PROMPTS is the list of prompt files to render."
         (switch-to-buffer agent-shell-cockpit--buffer)
         (agent-shell-cockpit-refresh)))))
 
-(defun agent-shell-cockpit-workspace-view-kill-session ()
-  "Kill the live session at point."
+(defun agent-shell-cockpit-workspace-view-forget-session ()
+  "Forget the historical session at point after confirmation."
   (interactive)
-  (unless (eq (agent-shell-cockpit-ui-object-type-at-point) 'live-session)
-    (user-error "Point is not on a live session"))
-  (let ((buffer (agent-shell-cockpit-ui-object-at-point)))
-    (when (yes-or-no-p (format "Kill agent session %s? " (buffer-name buffer)))
-      (let ((kill-buffer-query-functions nil)) (kill-buffer buffer))
+  (unless (eq (agent-shell-cockpit-ui-object-type-at-point) 'session-history)
+    (user-error "Point is not on historical session"))
+  (let* ((workspace (agent-shell-cockpit-workspace-view--workspace))
+         (session (agent-shell-cockpit-ui-object-at-point))
+         (name (or (map-elt session 'title)
+                   (map-elt session 'sessionId))))
+    (when (y-or-n-p (format "Discard historical session %s? " name))
+      (agent-shell-cockpit-session-forget workspace session)
       (agent-shell-cockpit-workspace-view-refresh))))
-
-(defun agent-shell-cockpit-workspace-view-allow-once ()
-  "Allow the live agent's latest pending permission request once."
-  (interactive)
-  (unless (eq (agent-shell-cockpit-ui-object-type-at-point) 'live-session)
-    (user-error "Point is not on a live agent"))
-  (let ((buffer (agent-shell-cockpit-ui-object-at-point)))
-    (agent-shell-cockpit-session-allow-once buffer)
-    (agent-shell-cockpit-workspace-view-refresh)))
 
 (defun agent-shell-cockpit-workspace-view-back ()
   "Return to the cockpit dashboard."
@@ -456,48 +428,44 @@ PROMPTS is the list of prompt files to render."
   "Invoke a Cockpit workspace command from the available commands."
   ["Workspace and agent commands"
    [("s" "Start agent" agent-shell-cockpit-workspace-view-start-agent)
-    ("S" "Start selected agent"
-     agent-shell-cockpit-workspace-view-start-agent-select)
-    ("r" "Resume agent" agent-shell-cockpit-resume-session
-     :inapt-if-not
-     (lambda ()
-       (agent-shell-cockpit-workspace-view--type-at-point-p
-        'session-history)))
-    ("K" "Kill agent" agent-shell-cockpit-workspace-view-kill-session
+    ("a" "Agent actions" agent-shell-cockpit-agent-actions
      :inapt-if-not
      (lambda ()
        (agent-shell-cockpit-workspace-view--type-at-point-p
         'live-session)))
-    ("Y" "Allow permission once" agent-shell-cockpit-workspace-view-allow-once
+    ("K" "Kill agent" agent-shell-cockpit-agent-kill
      :inapt-if-not
      (lambda ()
        (agent-shell-cockpit-workspace-view--type-at-point-p
-        'live-session)))]
-   [("e" "Edit prompt" agent-shell-cockpit-workspace-view-edit-prompt)
+        'live-session)))
+    ("x" "Discard history" agent-shell-cockpit-workspace-view-forget-session
+     :inapt-if-not
+     (lambda ()
+       (agent-shell-cockpit-workspace-view--type-at-point-p
+        'session-history)))]
+   [("e" "Edit context" agent-shell-cockpit-workspace-view-edit-context)
     ("+" "Add repository" agent-shell-cockpit-add-worktree)
     ("-" "Remove repository" agent-shell-cockpit-remove-worktree
      :inapt-if-not
      (lambda ()
        (agent-shell-cockpit-workspace-view--type-at-point-p 'repository)))
-    ("A" "Archive workspace" agent-shell-cockpit-workspace-view-archive)]
-   [("b" "Return to dashboard" agent-shell-cockpit-workspace-view-back)]]
+    ("A" "Archive workspace" agent-shell-cockpit-workspace-view-archive)
+    ("b" "Return to dashboard" agent-shell-cockpit-workspace-view-back)]]
   ["Essential commands"
-   [("g" "       Refresh current buffer" agent-shell-cockpit-refresh)
+   [("r" "       Refresh current buffer" agent-shell-cockpit-refresh)
     ("q" "       Bury current buffer" agent-shell-cockpit-quit)
     ("<tab>" "   Toggle section at point" agent-shell-cockpit-toggle-section)
     ("<return>" "Visit thing at point" agent-shell-cockpit-open)]
    [("n" "       Next section" agent-shell-cockpit-next)
-    ("p" "       Previous section" agent-shell-cockpit-previous)
-    ("C-x m" "Show all key bindings" describe-mode)]])
+    ("p" "       Previous section" agent-shell-cockpit-previous)]])
 
 (defvar-keymap agent-shell-cockpit-workspace-view-mode-map
   :parent agent-shell-cockpit-ui-mode-map
   "s" #'agent-shell-cockpit-workspace-view-start-agent
-  "S" #'agent-shell-cockpit-workspace-view-start-agent-select
-  "r" #'agent-shell-cockpit-resume-session
-  "K" #'agent-shell-cockpit-workspace-view-kill-session
-  "Y" #'agent-shell-cockpit-workspace-view-allow-once
-  "e" #'agent-shell-cockpit-workspace-view-edit-prompt
+  "a" #'agent-shell-cockpit-agent-actions
+  "x" #'agent-shell-cockpit-workspace-view-forget-session
+  "K" #'agent-shell-cockpit-agent-kill
+  "e" #'agent-shell-cockpit-workspace-view-edit-context
   "+" #'agent-shell-cockpit-add-worktree
   "-" #'agent-shell-cockpit-remove-worktree
   "A" #'agent-shell-cockpit-workspace-view-archive
@@ -511,7 +479,8 @@ PROMPTS is the list of prompt files to render."
               agent-shell-cockpit-ui--open-function
               #'agent-shell-cockpit-workspace-view-open
               agent-shell-cockpit-ui--dispatch-function
-              #'agent-shell-cockpit-workspace-view-dispatch))
+              #'agent-shell-cockpit-workspace-view-dispatch)
+  (agent-shell-cockpit-agent-preview-mode 1))
 
 (defun agent-shell-cockpit-workspace-view-buffer (workspace)
   "Return a rendered detail buffer for WORKSPACE without displaying it."
@@ -529,8 +498,21 @@ PROMPTS is the list of prompt files to render."
 
 (defun agent-shell-cockpit-workspace-view (workspace)
   "Open detail view for WORKSPACE."
-  (switch-to-buffer
-   (agent-shell-cockpit-workspace-view-buffer workspace)))
+  (let* ((origin (current-buffer))
+         (buffer (agent-shell-cockpit-workspace-view-buffer workspace))
+         (return-buffer
+          (cond
+           ((with-current-buffer origin
+              (derived-mode-p 'agent-shell-cockpit-ui-mode))
+            origin)
+           ((buffer-live-p agent-shell-cockpit--buffer)
+            agent-shell-cockpit--buffer)
+           ((with-current-buffer origin
+              (not (derived-mode-p 'agent-shell-mode)))
+            origin))))
+    (with-current-buffer buffer
+      (setq agent-shell-cockpit-ui-return-buffer return-buffer))
+    (switch-to-buffer buffer)))
 
 (provide 'agent-shell-cockpit-workspace-view)
 

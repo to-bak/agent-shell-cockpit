@@ -20,12 +20,6 @@
 (declare-function agent-shell-cockpit-git-remove-worktree "agent-shell-cockpit-git")
 (declare-function agent-shell-cockpit-session-live-buffers "agent-shell-cockpit-session")
 
-(defun agent-shell-cockpit-workspace-slug (text)
-  "Return a filesystem-friendly slug derived from TEXT."
-  (let ((slug (downcase (string-trim text))))
-    (setq slug (replace-regexp-in-string "[^[:alnum:]._-]+" "-" slug))
-    (string-trim slug "[-_.]+" "[-_.]+")))
-
 (defun agent-shell-cockpit-workspace--validate-name (name)
   "Validate workspace directory NAME and return it."
   (unless (and (stringp name)
@@ -36,7 +30,7 @@
 
 (cl-defun agent-shell-cockpit-workspace-create (&key name)
   "Create and return a workspace named NAME.
-Workspace titles are derived from user prompt files when present, and
+Workspace titles are derived from user context files when present, and
 otherwise from NAME."
   (agent-shell-cockpit-workspace--validate-name name)
   (let* ((parent (file-name-as-directory
@@ -59,7 +53,7 @@ otherwise from NAME."
            (expand-file-name agent-shell-cockpit-repositories-directory-name
                              temporary))
           (make-directory
-           (expand-file-name agent-shell-cockpit-prompts-directory-name
+           (expand-file-name agent-shell-cockpit-context-directory-name
                              temporary))
           (agent-shell-cockpit-store-write record)
           (rename-file temporary target)
@@ -71,15 +65,15 @@ otherwise from NAME."
       (when (and temporary (file-directory-p temporary))
         (delete-directory temporary t)))))
 
-(defun agent-shell-cockpit-workspace-prompts-path (workspace)
-  "Return WORKSPACE's absolute prompt directory."
+(defun agent-shell-cockpit-workspace-context-path (workspace)
+  "Return WORKSPACE's absolute context directory."
   (file-name-as-directory
-   (expand-file-name agent-shell-cockpit-prompts-directory-name
+   (expand-file-name agent-shell-cockpit-context-directory-name
                      (map-elt workspace 'root))))
 
-(defun agent-shell-cockpit-workspace-prompt-paths (workspace)
-  "Return WORKSPACE's prompt files in stable relative-name order."
-  (let ((directory (agent-shell-cockpit-workspace-prompts-path workspace)))
+(defun agent-shell-cockpit-workspace-context-paths (workspace)
+  "Return WORKSPACE's context files in stable relative-name order."
+  (let ((directory (agent-shell-cockpit-workspace-context-path workspace)))
     (when (file-directory-p directory)
       (sort (directory-files-recursively
              directory directory-files-no-dot-files-regexp)
@@ -87,39 +81,47 @@ otherwise from NAME."
               (string-lessp (file-relative-name left directory)
                             (file-relative-name right directory)))))))
 
-(defun agent-shell-cockpit-workspace-prompt-name (workspace path)
-  "Return a concise display name for prompt PATH in WORKSPACE."
+(defun agent-shell-cockpit-workspace-context-name (workspace path)
+  "Return a concise display name for context PATH in WORKSPACE."
   (file-relative-name path
-                      (agent-shell-cockpit-workspace-prompts-path workspace)))
+                      (agent-shell-cockpit-workspace-context-path workspace)))
 
-(defun agent-shell-cockpit-workspace--new-prompt-path (workspace)
-  "Read and return a new prompt path inside WORKSPACE."
-  (let* ((directory (agent-shell-cockpit-workspace-prompts-path workspace))
-         (name (read-string "New prompt filename: ")))
+(defun agent-shell-cockpit-workspace--new-context-path (workspace)
+  "Read and return a new context path inside WORKSPACE."
+  (let* ((directory (agent-shell-cockpit-workspace-context-path workspace))
+         (name (read-string "New context filename: ")))
     (unless (and (not (string-empty-p name))
                  (equal name (file-name-nondirectory name))
                  (not (member name '("." ".."))))
-      (user-error "Prompt filename must be a plain filename"))
+      (user-error "Context filename must be a plain filename"))
     (expand-file-name name directory)))
 
-(defun agent-shell-cockpit-workspace-read-prompt (workspace)
-  "Read and return a prompt file for WORKSPACE, allowing a new file."
-  (let* ((paths (agent-shell-cockpit-workspace-prompt-paths workspace))
+(defun agent-shell-cockpit-workspace-read-context (workspace &optional allow-new)
+  "Read and return a context file for WORKSPACE.
+When ALLOW-NEW is non-nil, offer to create a new file."
+  (let* ((paths (agent-shell-cockpit-workspace-context-paths workspace))
          (choices (mapcar
                    (lambda (path)
-                     (cons (agent-shell-cockpit-workspace-prompt-name
+                     (cons (agent-shell-cockpit-workspace-context-name
                             workspace path)
                            path))
                    paths))
-         (new "[New prompt]")
-         (choice (completing-read "Prompt: " (cons new choices) nil t)))
-    (if (equal choice new)
-        (agent-shell-cockpit-workspace--new-prompt-path workspace)
-      (cdr (assoc choice choices)))))
+         (new "[New context]"))
+    (cond
+     ((and (not allow-new) (= (length paths) 1)) (car paths))
+     ((and (not allow-new) (null paths))
+      (user-error "Workspace has no context files"))
+     (t
+      (let ((choice (completing-read
+                     "Context: " (if allow-new (cons new choices) choices)
+                     nil t)))
+        (if (equal choice new)
+            (agent-shell-cockpit-workspace--new-context-path workspace)
+          (cdr (assoc choice choices))))))))
 
-(defun agent-shell-cockpit-workspace-edit-prompt (workspace)
-  "Select and edit one of WORKSPACE's prompt files."
-  (find-file (agent-shell-cockpit-workspace-read-prompt workspace)))
+(defun agent-shell-cockpit-workspace-edit-context (workspace)
+  "Select and edit one of WORKSPACE's context files."
+  (find-file (agent-shell-cockpit-workspace-read-context workspace t)))
 
 (defun agent-shell-cockpit-workspace-repair (invalid-record)
   "Back up and reconstruct metadata for INVALID-RECORD.
@@ -136,7 +138,7 @@ Session metadata remains available only in the timestamped backup."
     (when (file-exists-p path)
       (copy-file path (format "%s.backup-%s" path
                               (format-time-string "%Y%m%dT%H%M%S")) t))
-    (make-directory (agent-shell-cockpit-workspace-prompts-path record) t)
+    (make-directory (agent-shell-cockpit-workspace-context-path record) t)
     (agent-shell-cockpit-store-write record)
     (agent-shell-cockpit-store-read root)))
 

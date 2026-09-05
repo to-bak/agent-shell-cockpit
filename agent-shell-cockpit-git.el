@@ -87,14 +87,6 @@
    (agent-shell-cockpit-git--run
     directory "status" "--porcelain" "--untracked-files=all")))
 
-(defun agent-shell-cockpit-git-files (directory)
-  "Return absolute tracked and unignored untracked files in DIRECTORY."
-  (mapcar (lambda (path) (expand-file-name path directory))
-          (split-string
-           (agent-shell-cockpit-git--run
-            directory "ls-files" "-co" "--exclude-standard")
-           "\n" t)))
-
 (defun agent-shell-cockpit-git-description (directory)
   "Return the current branch or abbreviated commit for DIRECTORY."
   (condition-case nil

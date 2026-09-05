@@ -16,6 +16,7 @@ test:
 	  -l agent-shell-cockpit-test-helper \
 	  -l agent-shell-cockpit-store-test \
 	  -l agent-shell-cockpit-git-test \
+	  -l agent-shell-cockpit-skills-test \
 	  -l agent-shell-cockpit-session-ui-test \
 	  -f ert-run-tests-batch-and-exit
 

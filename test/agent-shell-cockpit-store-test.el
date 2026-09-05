@@ -12,15 +12,15 @@
       (should (equal (map-elt loaded 'sessions) nil))
       (should (equal (map-elt (car (agent-shell-cockpit-store-discover)) 'root)
                      (map-elt workspace 'root)))
-      (should-not (agent-shell-cockpit-workspace-prompt-paths loaded)))))
+      (should-not (agent-shell-cockpit-workspace-context-paths loaded)))))
 
 (ert-deftest agent-shell-cockpit-workspace-defaults-title-to-directory-name ()
   (agent-shell-cockpit-test-with-root
     (let ((workspace (agent-shell-cockpit-workspace-create :name "alpha")))
       (should (equal (map-elt workspace 'title) "alpha"))
       (should (file-directory-p
-               (agent-shell-cockpit-workspace-prompts-path workspace)))
-      (should-not (agent-shell-cockpit-workspace-prompt-paths workspace)))))
+               (agent-shell-cockpit-workspace-context-path workspace)))
+      (should-not (agent-shell-cockpit-workspace-context-paths workspace)))))
 
 (ert-deftest agent-shell-cockpit-store-persists-deliberate-metadata-subset ()
   (agent-shell-cockpit-test-with-root
@@ -123,7 +123,7 @@
       (let* ((invalid (car (agent-shell-cockpit-store-discover)))
              (repaired (agent-shell-cockpit-workspace-repair invalid)))
         (should (equal (map-elt repaired 'title) "alpha"))
-        (should-not (agent-shell-cockpit-workspace-prompt-paths repaired))
+        (should-not (agent-shell-cockpit-workspace-context-paths repaired))
         (should (file-exists-p path))
         (should (seq-some
                  (lambda (candidate)

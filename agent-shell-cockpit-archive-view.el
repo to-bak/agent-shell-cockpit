@@ -191,13 +191,12 @@ stored explicitly."
      :inapt-if-not agent-shell-cockpit-archive-view--workspace-at-point-p)
     ("b" "Return to dashboard" agent-shell-cockpit-archive-view-back)]]
   ["Essential commands"
-   [("g" "       Refresh current buffer" agent-shell-cockpit-refresh)
+   [("r" "       Refresh current buffer" agent-shell-cockpit-refresh)
     ("q" "       Bury current buffer" agent-shell-cockpit-quit)
     ("<return>" "Visit thing at point" agent-shell-cockpit-open
      :inapt-if-not agent-shell-cockpit-archive-view--workspace-at-point-p)]
    [("n" "       Next section" agent-shell-cockpit-next)
-    ("p" "       Previous section" agent-shell-cockpit-previous)
-    ("C-x m" "Show all key bindings" describe-mode)]])
+    ("p" "       Previous section" agent-shell-cockpit-previous)]])
 
 (defvar-keymap agent-shell-cockpit-archive-view-mode-map
   :parent agent-shell-cockpit-ui-mode-map
@@ -217,10 +216,12 @@ stored explicitly."
 (defun agent-shell-cockpit-archives ()
   "Open the Cockpit archive history buffer."
   (interactive)
-  (let ((buffer (get-buffer-create agent-shell-cockpit-archive-buffer-name)))
+  (let ((origin (current-buffer))
+        (buffer (get-buffer-create agent-shell-cockpit-archive-buffer-name)))
     (switch-to-buffer buffer)
     (unless (derived-mode-p 'agent-shell-cockpit-archive-view-mode)
       (agent-shell-cockpit-archive-view-mode))
+    (setq agent-shell-cockpit-ui-return-buffer origin)
     (agent-shell-cockpit-archive-view-refresh)))
 
 (provide 'agent-shell-cockpit-archive-view)

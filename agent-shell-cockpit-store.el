@@ -18,8 +18,8 @@
 (defconst agent-shell-cockpit-store-schema-version 2
   "Current workspace metadata schema version.")
 
-(defcustom agent-shell-cockpit-prompts-directory-name "prompts"
-  "Directory name used for prompt files inside each workspace."
+(defcustom agent-shell-cockpit-context-directory-name "context"
+  "Directory name used for context files inside each workspace."
   :type 'string
   :group 'agent-shell-cockpit)
 
@@ -78,11 +78,11 @@ When nil, use a .archive directory below
                (not (string-empty-p (map-elt record key))))
     (error "Missing or invalid %s" key)))
 
-(defun agent-shell-cockpit-store--prompt-title (root &optional fallback)
-  "Return the first Org prompt title below ROOT, or FALLBACK.
+(defun agent-shell-cockpit-store--context-title (root &optional fallback)
+  "Return the first Org context title below ROOT, or FALLBACK.
 When FALLBACK is nil, use ROOT's directory name."
   (let* ((directory (expand-file-name
-                     agent-shell-cockpit-prompts-directory-name root))
+                     agent-shell-cockpit-context-directory-name root))
          (files (when (file-directory-p directory)
                   (sort (directory-files-recursively directory "\\.org\\'")
                         #'string-lessp))))
@@ -152,7 +152,7 @@ When FALLBACK is nil, use ROOT's directory name."
     (agent-shell-cockpit-store-set record 'kind 'workspace)
     (agent-shell-cockpit-store-set record 'name name)
     (agent-shell-cockpit-store-set
-     record 'title (agent-shell-cockpit-store--prompt-title root name))
+     record 'title (agent-shell-cockpit-store--context-title root name))
     (agent-shell-cockpit-store-set
      record 'state (if archived "archived" "active"))
     record))
