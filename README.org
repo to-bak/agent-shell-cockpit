@@ -41,15 +41,7 @@ No global keys or window layout are installed by the package itself.
 Use =M-x customize-group RET agent-shell-cockpit= for settings.
 
 * Sample configuration
-
-This setup opens Cockpit full-screen, selects source repositories from Emacs'
-known projects, and opens worktrees in Magit (recommended; install Magit first).
-The worktree opener is a function option, not a hook.
-
 #+begin_src emacs-lisp
-  (use-package magit
-    :commands magit-status)
-
   (defun my-cockpit-fullscreen ()
     "Open Cockpit full-screen, saving the current layout for later restoration."
     (interactive)
@@ -58,6 +50,7 @@ The worktree opener is a function option, not a hook.
     (agent-shell-cockpit))
 
   (use-package agent-shell-cockpit
+    :straight (:type git :host github :repo "to-bak/agent-shell-cockpit")
     :after agent-shell
     :commands agent-shell-cockpit
     :bind ("C-c m" . my-cockpit-fullscreen)
@@ -66,17 +59,15 @@ The worktree opener is a function option, not a hook.
     (agent-shell-cockpit-agent-preview-behavior 'delayed)
     (agent-shell-cockpit-context-directory-name "context")
     (agent-shell-cockpit-worktrees-directory-name "worktrees")
+    ;; optional - requires magit
     (agent-shell-cockpit-worktree-open-function #'magit-status)
-    ;; defaults to dired - integrate with whatever project framework you are using.
-    ;;(agent-shell-cockpit-repository-source-function #'project-prompt-project-dir)
+    ;; optional - defaults to dired, but can integrate with whicever project framework you are using.
+    (agent-shell-cockpit-repository-source-function #'project-prompt-project-dir)
     :config
     ;; Optional: enable the Org-roam sources shown below.
     ;; (require 'agent-shell-cockpit-org-roam)
     )
 #+end_src
-
-Use =C-x r j c= to restore the saved window layout. Adapt the catalog in the
-next section to your own instruction files and Org-roam IDs.
 
 * Everyday workflow
 
