@@ -388,6 +388,26 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
                            ("T" "Open transcript" agent-shell-cockpit-agent-open-transcript)
                            ("C" "Clear buffer" agent-shell-cockpit-agent-clear)]])
 
+(transient-define-prefix agent-shell-cockpit-agent-configure-menu ()
+  "Configure the newly connected agent before sending its prepared input."
+  [["Configure agent (choices become available after connection)"
+    ("v" "Model" agent-shell-cockpit-agent-set-model :transient t)
+    ("t" "Reasoning" agent-shell-cockpit-agent-set-thought :transient t)
+    ("m" "Session / approval mode" agent-shell-cockpit-agent-set-mode :transient t)
+    ("o" "Other advertised option" agent-shell-cockpit-agent-set-option :transient t)
+    ("RET" "Done — visit agent" agent-shell-cockpit-agent-finish-configuration)]])
+
+(defun agent-shell-cockpit-agent-finish-configuration ()
+  "Visit the agent being configured without submitting its input."
+  (interactive)
+  (agent-shell-cockpit-session-visit agent-shell-cockpit-agent--action-buffer))
+
+(defun agent-shell-cockpit-agent-configure (buffer)
+  "Open native configuration controls for newly started BUFFER."
+  (unless (buffer-live-p buffer) (user-error "Agent did not create a buffer"))
+  (setq agent-shell-cockpit-agent--action-buffer buffer)
+  (agent-shell-cockpit-agent-configure-menu))
+
 (defun agent-shell-cockpit-agent-permissions ()
   "Choose an actual native permission option, validating it before invocation."
   (interactive)

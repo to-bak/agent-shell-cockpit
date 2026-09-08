@@ -149,6 +149,61 @@
         (should (equal calls (list (cons 'rename (current-buffer))
                                   (cons 'steer (current-buffer)))))))))
 
+(ert-deftest cockpit-session-settings-round-trip-and-protect-resume ()
+  (agent-shell-cockpit-test-with-root
+    (let* ((workspace (agent-shell-cockpit-workspace-create :name "settings"))
+           (root (map-elt workspace 'root))
+           (settings '(((id . "model") (value . "chosen"))
+                       ((id . "effort") (value . "high"))))
+           (config '((:identifier . codex)
+                     (:default-model-id . ignore)
+                     (:default-session-mode-id . ignore)
+                     (:default-config-options . ignore)))
+           (session '((agentId . "codex") (sessionId . "saved")))
+           (buffer (generate-new-buffer " *settings agent*"))
+           received)
+      (unwind-protect
+          (progn
+            (setf (map-elt session 'settings) settings)
+            (agent-shell-cockpit-store-update
+             root (lambda (record) (setf (map-elt record 'sessions) (list session))))
+            (setq session (car (map-elt (agent-shell-cockpit-store-read root) 'sessions)))
+            (should (equal (map-elt session 'settings) settings))
+            (cl-letf (((symbol-function 'agent-shell--resolved-agent-configs) (lambda () (list config)))
+                      ((symbol-function 'agent-shell-start)
+                       (lambda (&rest args)
+                         (setq received (plist-get args :config))
+                         (with-current-buffer buffer
+                           (setq default-directory root)
+                           (setq-local agent-shell--state
+                                       '((:agent-config . ((:identifier . codex)))
+                                         (:session . ((:id . "saved") (:model-id . "temporary"))))))
+                         buffer)))
+              (agent-shell-cockpit-session-resume workspace session))
+            (should (equal (funcall (map-elt received :default-config-options))
+                           '(("model" . "chosen") ("effort" . "high"))))
+            (should-not (map-elt received :default-model-id))
+            (should-not (map-elt received :default-session-mode-id))
+            (should (eq (map-elt config :default-model-id) 'ignore))
+            (with-current-buffer buffer
+              (agent-shell-cockpit-session--on-event '((:event . config-option-update)))
+              (should (equal (map-elt (car (map-elt (agent-shell-cockpit-store-read root) 'sessions))
+                                     'settings) settings))
+              (setf (map-elt agent-shell--state :config-options)
+                    '(((:id . "effort") (:type . "select") (:current-value . "high"))
+                      ((:id . "model") (:category . "model") (:type . "select")
+                       (:current-value . "chosen"))))
+              (agent-shell-cockpit-session--on-event '((:event . init-finished)))
+              (should-not agent-shell-cockpit-session--restoring-settings)
+              (should (equal (map-elt (car (map-elt (agent-shell-cockpit-store-read root) 'sessions))
+                                     'settings) settings))
+              ;; Closing after a native legacy-mode change must save that change.
+              (setf (map-elt (map-elt agent-shell--state :session) :mode-id) "ask")
+              (agent-shell-cockpit-session--on-event '((:event . clean-up)))
+              (should (equal (nth 1 (map-elt (car (map-elt (agent-shell-cockpit-store-read root) 'sessions))
+                                            'settings)) '((id . "mode") (value . "ask"))))))
+        (when (buffer-live-p buffer) (kill-buffer buffer))))))
+
 (ert-deftest cockpit-workspace-header-retains-title-and-location ()
   (agent-shell-cockpit-test-with-root
     (let ((workspace (agent-shell-cockpit-workspace-create :name "alpha")))

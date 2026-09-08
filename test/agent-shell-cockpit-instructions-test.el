@@ -99,7 +99,7 @@
          (let ((section (magit-current-section)))
            (should-not (oref section content))
            (should (equal (buffer-substring-no-properties
-                           (line-beginning-position) (line-end-position)) "service …"))))))))
+                           (line-beginning-position) (line-end-position)) "service · checking changes…"))))))))
 
 (ert-deftest cockpit-instructions-selected-text-reaches-native-launch ()
   (agent-shell-cockpit-test-with-root

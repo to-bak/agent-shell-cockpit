@@ -164,6 +164,9 @@
 (defvar agent-shell-cockpit-session-change-hook nil
   "Hook run when a native agent reports a state change.")
 
+(defvar-local agent-shell-cockpit-session--restoring-settings nil
+  "Non-nil until saved settings finish their initialization pipeline.")
+
 (defun agent-shell-cockpit-session--upsert-current ()
   "Persist the current buffer's session using a fresh metadata transaction."
   (when-let* ((root agent-shell-cockpit-session-workspace-root)
@@ -171,6 +174,7 @@
               (agent-id (agent-shell-cockpit-session--identifier))
               (session-id (agent-shell-cockpit-session--session-id)))
     (let ((title (agent-shell-cockpit-session--title))
+          (settings (agent-shell-cockpit-agent-shell-settings))
           (cwd (file-relative-name default-directory root)))
       (agent-shell-cockpit-store-update
        root
@@ -188,15 +192,23 @@
              (agent-shell-cockpit-store-set workspace 'sessions
                                             (append sessions (list existing))))
            (agent-shell-cockpit-store-set existing 'title title)
+           (unless agent-shell-cockpit-session--restoring-settings
+             (agent-shell-cockpit-store-set existing 'settings settings))
            (agent-shell-cockpit-store-set existing 'cwd cwd)))))))
 
 (defun agent-shell-cockpit-session--on-event (event)
   "Handle an agent-shell EVENT for an attached buffer."
   (run-hooks 'agent-shell-cockpit-session-change-hook)
   (pcase (map-elt event :event)
+    ('init-finished
+     (setq agent-shell-cockpit-session--restoring-settings nil)
+     (agent-shell-cockpit-session--upsert-current))
+    ('config-option-update
+     (agent-shell-cockpit-session--upsert-current))
     ((or 'init-session 'session-restored 'session-title-changed 'turn-complete)
      (agent-shell-cockpit-session--upsert-current))
     ('clean-up
+     (agent-shell-cockpit-session--upsert-current)
      (setq agent-shell-cockpit-session--subscription nil))))
 
 (defun agent-shell-cockpit-session--subscribe ()
@@ -306,7 +318,13 @@ displayed history, not the agent's remembered conversation."
            (agent-shell-session-restore-verbosity verbosity)
            (agent-shell-cwd-function (let ((directory default-directory)) (lambda () directory)))
            (buffer (agent-shell-start
-                    :config config :session-id (map-elt session 'sessionId))))
+                    :config (agent-shell-cockpit-agent-shell-resume-config
+                             config (map-elt session 'settings))
+                    :session-id (map-elt session 'sessionId))))
+      (with-current-buffer buffer
+        (setq agent-shell-cockpit-session--restoring-settings
+              (and (map-elt session 'settings)
+                   (not (agent-shell-cockpit-agent-shell-state-value '(:set-config-options))))))
       (agent-shell-cockpit-session-attach buffer workspace)
       (with-current-buffer buffer
         ;; Replay continues asynchronously after `agent-shell-start' returns.

@@ -94,6 +94,19 @@ When nil, use a .archive directory below
     (error "Session metadata is not a JSON object"))
   (dolist (key '(agentId sessionId))
     (agent-shell-cockpit-store--required-string session key))
+  (when-let* ((settings (map-elt session 'settings)))
+    (unless (and (sequencep settings) (not (stringp settings)))
+      (error "Invalid session settings"))
+    (let (seen)
+      (seq-doseq (entry settings)
+        (unless (and (listp entry) (= (length entry) 2))
+          (error "Invalid session setting"))
+        (dolist (key '(id value))
+          (agent-shell-cockpit-store--required-string entry key))
+        (when (member (map-elt entry 'id) seen)
+          (error "Duplicate session setting"))
+        (push (map-elt entry 'id) seen)))
+    (agent-shell-cockpit-store-set session 'settings (append settings nil)))
   (when (and (map-elt session 'title)
              (not (stringp (map-elt session 'title))))
     (error "Invalid session title")))
@@ -205,8 +218,11 @@ workspace records are included so the UI can report them."
      (sessions . ,(vconcat
                    (mapcar
                     (lambda (session)
-                      (agent-shell-cockpit-store--fields
-                       session '(agentId sessionId title cwd displayId)))
+                      (append
+                       (agent-shell-cockpit-store--fields
+                        session '(agentId sessionId title cwd displayId))
+                       (when (assq 'settings session)
+                         `((settings . ,(vconcat (map-elt session 'settings)))))))
                     (map-elt record 'sessions)))))
    (agent-shell-cockpit-store--fields
     record '(id name displayTitle archivedAt operation worktreeDirectory))

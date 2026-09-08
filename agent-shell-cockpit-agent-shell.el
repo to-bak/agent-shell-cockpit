@@ -79,6 +79,47 @@ All compatibility-sensitive state access is isolated in this function."
               (equal (format "%s" (map-elt config :identifier)) identifier))
             (agent-shell--resolved-agent-configs)))
 
+(defun agent-shell-cockpit-agent-shell-settings ()
+  "Return confirmed select-option IDs and values, with model first.
+Include native model and mode IDs when no categorized option supplies them."
+  (let ((options (or (agent-shell-cockpit-agent-shell-state-value '(:session :config-options))
+                     (agent-shell-cockpit-agent-shell-state-value '(:config-options))))
+        model mode other)
+    (dolist (option options)
+      (let ((id (map-elt option :id)) (value (map-elt option :current-value)))
+        (when (and (equal (map-elt option :type) "select")
+                   (stringp id) (not (string-empty-p id))
+                   (stringp value) (not (string-empty-p value)))
+          (let ((entry `((id . ,id) (value . ,value))))
+            (pcase (or (map-elt option :category)
+                       (and (member id '("model" "mode")) id))
+              ("model" (setq model entry))
+              ("mode" (setq mode entry))
+              (_ (push entry other)))))))
+    (dolist (spec '(("model" :model-id) ("mode" :mode-id)))
+      (when-let* ((value (agent-shell-cockpit-agent-shell-state-value
+                         (list :session (cadr spec))))
+                  ((stringp value)) ((not (string-empty-p value))))
+        (let ((entry `((id . ,(car spec)) (value . ,value))))
+          (if (equal (car spec) "model")
+              (unless model (setq model entry))
+            (unless mode (setq mode entry))))))
+    (append (delq nil (list model mode)) (nreverse other))))
+
+(defun agent-shell-cockpit-agent-shell-resume-config (config settings)
+  "Copy CONFIG with saved SETTINGS as its native initialization options.
+Suppress launch defaults for this resume only.  Native initialization checks
+each advertised value and reports refusals without blocking the session."
+  (if (not settings) config
+    (let ((copy (copy-tree config))
+          (options (mapcar (lambda (entry)
+                             (cons (map-elt entry 'id) (map-elt entry 'value)))
+                           settings)))
+      (setf (map-elt copy :default-model-id) nil
+            (map-elt copy :default-session-mode-id) nil
+            (map-elt copy :default-config-options) (lambda () options))
+      copy)))
+
 (defun agent-shell-cockpit-agent-shell-permission-choices (buffer)
   "Return native permission choices for the latest request in BUFFER.
 Each choice contains a label, position marker, keymap and native command."

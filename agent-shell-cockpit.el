@@ -43,6 +43,7 @@
   (evil-set-initial-state 'agent-shell-cockpit-workspace-view-mode 'motion)
   (evil-set-initial-state 'agent-shell-cockpit-archive-view-mode 'motion)
   (evil-define-key* 'motion agent-shell-cockpit-mode-map
+    (kbd "I") #'agent-shell-cockpit-visit-instruction
                     (kbd "TAB") #'agent-shell-cockpit-toggle-section
                     (kbd "RET") #'agent-shell-cockpit-open
                     "?" #'agent-shell-cockpit-dispatch
@@ -55,7 +56,8 @@
                     "w" #'agent-shell-cockpit-create-workspace
                     "e" #'agent-shell-cockpit-edit-context
                     "s" #'agent-shell-cockpit-start-agent
-                    "S" #'agent-shell-cockpit-start-standalone
+                    "S" #'agent-shell-cockpit-start-agent-defaults
+                    "N" #'agent-shell-cockpit-start-standalone
                     "]" #'agent-shell-cockpit-next-attention
                     "+" #'agent-shell-cockpit-attach-session
                     "a" #'agent-shell-cockpit-agent-actions
@@ -64,6 +66,7 @@
                     "l" #'agent-shell-cockpit-archive-dispatch
                     "q" #'agent-shell-cockpit-quit)
   (evil-define-key* 'motion agent-shell-cockpit-workspace-view-mode-map
+    (kbd "I") #'agent-shell-cockpit-visit-instruction
                     (kbd "TAB") #'agent-shell-cockpit-toggle-section
                     (kbd "RET") #'agent-shell-cockpit-open
                     "?" #'agent-shell-cockpit-dispatch
@@ -73,6 +76,7 @@
                     "p" #'agent-shell-cockpit-previous
                     "r" #'agent-shell-cockpit-refresh
                     "s" #'agent-shell-cockpit-workspace-view-start-agent
+                    "S" #'agent-shell-cockpit-workspace-view-start-agent-defaults
                     "R" #'agent-shell-cockpit-workspace-view-recover
                     "t" #'agent-shell-cockpit-workspace-view-title
                     "v" #'agent-shell-cockpit-agent-preview

@@ -272,11 +272,13 @@ CONTEXTS is the list of context files to render."
                            ((not (file-directory-p path)) " · missing")
                            (t
                             (pcase (agent-shell-cockpit-git-status path)
-                              ('dirty (propertize " ●" 'font-lock-face 'warning
-                                                  'help-echo "Uncommitted changes"))
+                              ('dirty (propertize " · uncommitted changes"
+                                                  'font-lock-face 'warning
+                                                  'help-echo "Staged, unstaged, or untracked files"))
                               ('clean "")
-                              ('pending (propertize " …" 'help-echo "Checking changes"))
-                              (_ (propertize " ?" 'help-echo "Git status unavailable"))))))
+                              ('pending " · checking changes…")
+                              (_ (propertize " · status unavailable"
+                                             'font-lock-face 'agent-shell-cockpit-secondary))))))
              nil 'repository repository nil t)))
       (insert (propertize "No worktrees\n"
                           'face 'agent-shell-cockpit-secondary)))
@@ -403,7 +405,13 @@ CONTEXTS is the list of context files to render."
       (agent-shell-cockpit-workspace-view-refresh))))
 
 (defun agent-shell-cockpit-workspace-view-start-agent ()
-  "Select launch instructions and start an agent in this workspace."
+  "Start and configure an agent in this workspace."
+  (interactive)
+  (agent-shell-cockpit-agent-configure
+   (agent-shell-cockpit-workspace-view-start-agent-defaults)))
+
+(defun agent-shell-cockpit-workspace-view-start-agent-defaults ()
+  "Select instructions and start an agent using configured defaults."
   (interactive)
   (agent-shell-cockpit-instructions-launch
    (agent-shell-cockpit-workspace-view--workspace)))
@@ -449,7 +457,8 @@ CONTEXTS is the list of context files to render."
                          "Invoke a Cockpit workspace command from the available commands."
                          ["Workspace and agent commands"
                           [("R" "Restore / recover" agent-shell-cockpit-workspace-view-recover)
-                           ("s" "Start agent" agent-shell-cockpit-workspace-view-start-agent)
+                           ("s" "Start and configure" agent-shell-cockpit-workspace-view-start-agent)
+                           ("S" "Start with defaults" agent-shell-cockpit-workspace-view-start-agent-defaults)
                            ("a" "Agent actions" agent-shell-cockpit-agent-actions
                             :inapt-if-not
                             (lambda ()
@@ -491,8 +500,10 @@ CONTEXTS is the list of context files to render."
 
 (defvar-keymap agent-shell-cockpit-workspace-view-mode-map
   :parent agent-shell-cockpit-ui-mode-map
+  "I" #'agent-shell-cockpit-visit-instruction
   "R" #'agent-shell-cockpit-workspace-view-recover
   "s" #'agent-shell-cockpit-workspace-view-start-agent
+  "S" #'agent-shell-cockpit-workspace-view-start-agent-defaults
   "a" #'agent-shell-cockpit-agent-actions
   "x" #'agent-shell-cockpit-workspace-view-forget-session
   "K" #'agent-shell-cockpit-agent-kill

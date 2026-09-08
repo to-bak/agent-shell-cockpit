@@ -131,7 +131,17 @@ references before returning; failures do not produce partial agent input."
     (when items
       (string-join (append (nreverse bootstraps) (nreverse items)) "\n\n"))))
 
+(defcustom agent-shell-cockpit-instructions-read-function
+  #'agent-shell-cockpit-instructions-read-default
+  "Function selecting ordered instruction IDs.
+Called with optional WORKSPACE and SINGLE arguments."
+  :type 'function :group 'agent-shell-cockpit)
+
 (defun agent-shell-cockpit-instructions-read (&optional workspace single)
+  "Choose ordered instruction IDs for WORKSPACE, or one when SINGLE."
+  (funcall agent-shell-cockpit-instructions-read-function workspace single))
+
+(defun agent-shell-cockpit-instructions-read-default (&optional workspace single)
   "Choose configured instruction identifiers for WORKSPACE.
 When SINGLE is non-nil, choose one identifier for visiting."
   (let* ((catalog (agent-shell-cockpit-instructions--catalog workspace))

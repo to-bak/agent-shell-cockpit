@@ -27,6 +27,7 @@ jobs:
             --eval "(package-install 'transient)" \
             --eval "(package-install 'package-lint)" \
             --eval "(package-install 'evil)" \
+            --eval "(package-install 'consult)" \
             --eval "(package-install 'org-roam)"
       - name: Run isolated tests
         run: make test integration optional-integration smoke STRAIGHT_BUILD=~/.emacs.d/elpa

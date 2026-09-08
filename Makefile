@@ -29,7 +29,7 @@ integration:
 	  -l agent-shell-cockpit-integration-test -f ert-run-tests-batch-and-exit
 
 optional-integration:
-	$(EMACS_BATCH) $(DEPENDENCY_LOAD_PATH) $(foreach name,evil goto-chg org-roam emacsql,$(foreach dir,$(wildcard $(STRAIGHT_BUILD)/$(name) $(STRAIGHT_BUILD)/$(name)-[0-9]*),-L $(dir))) -L . \
+	$(EMACS_BATCH) $(DEPENDENCY_LOAD_PATH) $(foreach name,evil goto-chg org-roam emacsql consult,$(foreach dir,$(wildcard $(STRAIGHT_BUILD)/$(name) $(STRAIGHT_BUILD)/$(name)-[0-9]*),-L $(dir))) -L . \
 	  -l test/agent-shell-cockpit-optional-test.el -f ert-run-tests-batch-and-exit
 
 smoke:

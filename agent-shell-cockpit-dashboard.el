@@ -193,7 +193,13 @@ Each function receives WORKSPACES and AGENTS."
    (agent-shell-cockpit-dashboard-selected-workspace)))
 
 (defun agent-shell-cockpit-start-agent ()
-  "Select launch instructions and start an agent in the selected workspace."
+  "Start and configure an agent in the selected workspace."
+  (interactive)
+  (agent-shell-cockpit-agent-configure
+   (agent-shell-cockpit-start-agent-defaults)))
+
+(defun agent-shell-cockpit-start-agent-defaults ()
+  "Select instructions and start an agent using configured defaults."
   (interactive)
   (agent-shell-cockpit-instructions-launch
    (agent-shell-cockpit-dashboard-selected-workspace)))
@@ -272,9 +278,11 @@ Each function receives WORKSPACES and AGENTS."
      :inapt-if-not agent-shell-cockpit-dashboard--workspace-at-point-p)
     ("E" "Repair metadata" agent-shell-cockpit-repair-workspace
      :inapt-if-not agent-shell-cockpit-dashboard--invalid-at-point-p)]
-   [("S" "Standalone agent" agent-shell-cockpit-start-standalone
+   [("N" "Standalone agent" agent-shell-cockpit-start-standalone
      :if (lambda () agent-shell-cockpit-enable-standalone-sessions))
-    ("s" "Start agent" agent-shell-cockpit-start-agent
+    ("s" "Start and configure" agent-shell-cockpit-start-agent
+     :inapt-if-not agent-shell-cockpit-dashboard--workspace-at-point-p)
+    ("S" "Start with defaults" agent-shell-cockpit-start-agent-defaults
      :inapt-if-not agent-shell-cockpit-dashboard--workspace-at-point-p)
     ("+" "Attach agent" agent-shell-cockpit-attach-session
      :inapt-if-not agent-shell-cockpit-dashboard--unassigned-at-point-p)
@@ -296,10 +304,12 @@ Each function receives WORKSPACES and AGENTS."
 
 (defvar-keymap agent-shell-cockpit-mode-map
   :parent agent-shell-cockpit-ui-mode-map
+  "I" #'agent-shell-cockpit-visit-instruction
   "w" #'agent-shell-cockpit-create-workspace
   "e" #'agent-shell-cockpit-edit-context
   "s" #'agent-shell-cockpit-start-agent
-  "S" #'agent-shell-cockpit-start-standalone
+  "S" #'agent-shell-cockpit-start-agent-defaults
+  "N" #'agent-shell-cockpit-start-standalone
   "]" #'agent-shell-cockpit-next-attention
   "+" #'agent-shell-cockpit-attach-session
   "a" #'agent-shell-cockpit-agent-actions

@@ -47,6 +47,9 @@ Use =M-x customize-group RET agent-shell-cockpit= for settings.
 4. Press =s= to select instruction IDs with completion, then choose an
    agent. With no instructions selected, the agent starts normally. Selected
    instructions become editable initial input; Cockpit does not submit them.
+   In both views, =s= opens configuration controls for the new agent;
+   =S= starts with defaults. Options become available after the agent connects.
+   Choose model first, then reasoning and session/approval mode as supported.
 5. Return to Cockpit with =q= from the agent's Cockpit navigation mode.
    Agent rows show working, attention, and history states. =RET= visits a live
    agent or resumes a recorded session when its configuration is available.
@@ -54,10 +57,23 @@ Use =M-x customize-group RET agent-shell-cockpit= for settings.
 7. Stop agents before archiving with =A=. Archived workspaces remain available
    through the dashboard's =l= menu; =R= restores an archived workspace.
 
-Enable =agent-shell-cockpit-enable-standalone-sessions= to expose dashboard =S=.
+Enable =agent-shell-cockpit-enable-standalone-sessions= to expose dashboard =N=.
 It asks for a working directory and starts an agent without creating a workspace.
 Standalone sessions have no Cockpit-persisted history; agent-shell manages its
 own transcripts and native session storage.
+
+For optional Consult previews, install Consult and enable:
+
+#+begin_src emacs-lisp
+(require 'agent-shell-cockpit-consult)
+(setq agent-shell-cockpit-instructions-read-function
+      #'agent-shell-cockpit-consult-read)
+#+end_src
+
+RET adds an instruction in order. Choose =Done= to accept, =Remove last= to
+undo, or =Clear= to empty the selection. C-g cancels. The preview shows the
+resulting instruction text, including references without extracting documents.
+The ordinary comma-separated picker remains the package default.
 
 * Declarative reusable instructions
 
@@ -157,7 +173,8 @@ contents. The agent needs access to the referenced locations.
 | All       | r         | Refresh                             |
 | All       | q         | Return/bury buffer                  |
 | Dashboard | w         | Create workspace                    |
-| Dashboard | s / S     | Workspace / standalone agent        |
+| Both      | s / S     | Configure / start with defaults     |
+| Dashboard | N         | Standalone agent                    |
 | Dashboard | +         | Attach compatible unassigned agent  |
 | Dashboard | l         | Archive menu                        |
 | Workspace | c / e     | Create / edit context file          |
@@ -178,9 +195,10 @@ Automatic agent previews are configurable with
 Cockpit preserves view position and folding on refresh. Preview windows use
 =display-buffer= and respect user display rules.
 
-Worktrees are flat rows containing the name. A warning dot marks uncommitted
-changes (including untracked files); an ellipsis means checking, and a question
-mark means status is unavailable. Checks run asynchronously with a five-second
+Worktrees are flat rows containing the name. The label =uncommitted changes=
+marks staged, unstaged, or untracked files. =checking changes…= means a check is
+pending; =status unavailable= means it failed. Clean worktrees have no label.
+Checks run asynchronously with a five-second
 cache. Missing and archived worktrees are labelled. Use your preferred Git
 tools from the worktree for review.
 
@@ -194,6 +212,15 @@ resuming. =agent-shell-cockpit-session-restore-verbosity= can be =ask=, =minimal
 =last=, =first-last=, or =full=; its default =nil= inherits agent-shell's setting.
 This controls display, not the agent's memory; backend capabilities determine
 which restore modes agent-shell can use.
+
+Cockpit saves confirmed model, session mode, and advertised select-option
+values alongside each workspace session. On resume it overrides launch defaults
+with that snapshot, applying the model before reasoning and other options.
+Agent-shell reports unavailable or rejected selections in the restored buffer
+and continues initialization. The actual resulting settings become the next
+snapshot. Credentials, permission responses, and entire agent configurations
+are not stored. Sessions without a snapshot use their usual launch defaults.
+Standalone sessions remain managed by agent-shell.
 
 The opener defaults to Dired and remains configurable:
 

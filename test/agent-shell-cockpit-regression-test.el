@@ -53,13 +53,19 @@
                       (expand-file-name "checkouts" root)))))))
 
 (ert-deftest cockpit-workspace-launch-selects-instructions ()
-  (let ((workspace '((root . "/unused/"))) selected)
+  (let ((workspace '((root . "/unused/"))) selected configured)
     (cl-letf (((symbol-function 'agent-shell-cockpit-dashboard-selected-workspace)
                (lambda () workspace))
               ((symbol-function 'agent-shell-cockpit-instructions-launch)
-               (lambda (value) (setq selected value))))
+               (lambda (value) (setq selected value) (current-buffer)))
+              ((symbol-function 'agent-shell-cockpit-agent-configure)
+               (lambda (buffer) (setq configured buffer))))
       (agent-shell-cockpit-start-agent)
-      (should (eq selected workspace)))))
+      (should (eq selected workspace))
+      (should (eq configured (current-buffer)))
+      (setq configured nil)
+      (agent-shell-cockpit-start-agent-defaults)
+      (should-not configured))))
 
 (provide 'agent-shell-cockpit-regression-test)
 ;;; agent-shell-cockpit-regression-test.el ends here

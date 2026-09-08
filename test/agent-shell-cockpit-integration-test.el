@@ -6,6 +6,42 @@
 (require 'agent-shell)
 (require 'agent-shell-cockpit)
 
+(ert-deftest cockpit-integration-restores-options-in-native-order-with-refusals ()
+  (with-temp-buffer
+    (setq major-mode 'agent-shell-mode)
+    (setq-local shell-maker--config 'fixture)
+    (setq-local agent-shell--state
+                `((:buffer . ,(current-buffer))
+                  (:session . ((:id . "saved")))
+                  (:config-options .
+                   (((:id . "model") (:type . "select") (:category . "model")
+                     (:current-value . "old")
+                     (:options . (((:value . "chosen") (:name . "Chosen")))))))))
+    (let ((settings '(((id . "model") (value . "chosen"))
+                      ((id . "effort") (value . "high"))
+                      ((id . "removed-option") (value . "gone"))))
+          requests bodies finished)
+      (cl-letf (((symbol-function 'agent-shell--update-bootstrapping-fragment)
+                 (lambda (&rest args) (push (plist-get args :body) bodies)))
+                ((symbol-function 'agent-shell--request-default-config-option)
+                 (lambda (&rest args)
+                   (push (plist-get args :option) requests)
+                   ;; This model advertises reasoning only after it is selected.
+                   (when (equal (plist-get args :option) "model")
+                     (push '((:id . "effort") (:type . "select")
+                             (:category . "thought_level") (:current-value . "low")
+                             (:options . (((:value . "high") (:name . "High")))))
+                           (map-elt agent-shell--state :config-options)))
+                   (funcall (plist-get args :on-success)))))
+        (let ((config (agent-shell-cockpit-agent-shell-resume-config nil settings)))
+          (agent-shell--set-default-config-options
+           :config-options (funcall (map-elt config :default-config-options))
+           :on-options-set (lambda () (setq finished t))))
+        (should finished)
+        (should (equal (nreverse requests) '("model" "effort")))
+        (should (seq-some (lambda (body)
+                            (and body (string-match-p "removed-option" body))) bodies))))))
+
 (defun cockpit-integration-agent (directory &optional session)
   "Create a native-state fixture in DIRECTORY with SESSION, without transport."
   (let ((buffer (generate-new-buffer " *cockpit native fixture*")))
