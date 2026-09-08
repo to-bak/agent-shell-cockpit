@@ -109,10 +109,13 @@
                           (cons 'sessionId "session-1")
                           (cons 'title "Resume me")))
            (config '((:identifier . codex)))
+           (agent-shell-cockpit-session-restore-verbosity 'ask)
            (buffer (generate-new-buffer " *resumed agent*"))
            received)
       (unwind-protect
-          (cl-letf (((symbol-function 'agent-shell--resolved-agent-configs)
+          (cl-letf (((symbol-function 'completing-read)
+                     (lambda (&rest _) "last"))
+                    ((symbol-function 'agent-shell--resolved-agent-configs)
                      (lambda () (list config)))
                     ((symbol-function 'agent-shell-start)
                      (lambda (&rest arguments)
@@ -127,8 +130,95 @@
             (should (eq (agent-shell-cockpit-session-resume workspace session)
                         buffer))
             (should (eq (plist-get received :config) config))
-            (should (equal (plist-get received :session-id) "session-1")))
+            (should (equal (plist-get received :session-id) "session-1"))
+            (should (eq (buffer-local-value 'agent-shell-session-restore-verbosity buffer)
+                        'last))
+            (should (eq agent-shell-session-restore-verbosity 'minimal)))
         (when (buffer-live-p buffer) (kill-buffer buffer))))))
+
+(ert-deftest cockpit-native-steer-and-rename-target-selected-agent ()
+  (with-temp-buffer
+    (let ((agent-shell-cockpit-agent--action-buffer (current-buffer))
+          calls)
+      (cl-letf (((symbol-function 'agent-shell-prompt-steer)
+                 (lambda () (interactive) (push (cons 'steer (current-buffer)) calls)))
+                ((symbol-function 'agent-shell-rename-buffer)
+                 (lambda () (interactive) (push (cons 'rename (current-buffer)) calls))))
+        (agent-shell-cockpit-agent-steer)
+        (agent-shell-cockpit-agent-rename)
+        (should (equal calls (list (cons 'rename (current-buffer))
+                                  (cons 'steer (current-buffer)))))))))
+
+(ert-deftest cockpit-session-settings-round-trip-and-protect-resume ()
+  (agent-shell-cockpit-test-with-root
+    (let* ((workspace (agent-shell-cockpit-workspace-create :name "settings"))
+           (root (map-elt workspace 'root))
+           (settings '(((id . "model") (value . "chosen"))
+                       ((id . "effort") (value . "high"))))
+           (config '((:identifier . codex)
+                     (:default-model-id . ignore)
+                     (:default-session-mode-id . ignore)
+                     (:default-config-options . ignore)))
+           (session '((agentId . "codex") (sessionId . "saved")))
+           (buffer (generate-new-buffer " *settings agent*"))
+           received)
+      (unwind-protect
+          (progn
+            (setf (map-elt session 'settings) settings)
+            (agent-shell-cockpit-store-update
+             root (lambda (record) (setf (map-elt record 'sessions) (list session))))
+            (setq session (car (map-elt (agent-shell-cockpit-store-read root) 'sessions)))
+            (should (equal (map-elt session 'settings) settings))
+            (cl-letf (((symbol-function 'agent-shell--resolved-agent-configs) (lambda () (list config)))
+                      ((symbol-function 'agent-shell-start)
+                       (lambda (&rest args)
+                         (setq received (plist-get args :config))
+                         (with-current-buffer buffer
+                           (setq default-directory root)
+                           (setq-local agent-shell--state
+                                       '((:agent-config . ((:identifier . codex)))
+                                         (:session . ((:id . "saved") (:model-id . "temporary"))))))
+                         buffer)))
+              (agent-shell-cockpit-session-resume workspace session))
+            (should (equal (funcall (map-elt received :default-config-options))
+                           '(("model" . "chosen") ("effort" . "high"))))
+            (should-not (map-elt received :default-model-id))
+            (should-not (map-elt received :default-session-mode-id))
+            (should (eq (map-elt config :default-model-id) 'ignore))
+            (with-current-buffer buffer
+              (agent-shell-cockpit-session--on-event '((:event . config-option-update)))
+              (should (equal (map-elt (car (map-elt (agent-shell-cockpit-store-read root) 'sessions))
+                                     'settings) settings))
+              (setf (map-elt agent-shell--state :config-options)
+                    '(((:id . "effort") (:type . "select") (:current-value . "high"))
+                      ((:id . "model") (:category . "model") (:type . "select")
+                       (:current-value . "chosen"))))
+              (agent-shell-cockpit-session--on-event '((:event . init-finished)))
+              (should-not agent-shell-cockpit-session--restoring-settings)
+              (should (equal (map-elt (car (map-elt (agent-shell-cockpit-store-read root) 'sessions))
+                                     'settings) settings))
+              ;; Closing after a native legacy-mode change must save that change.
+              (setf (map-elt (map-elt agent-shell--state :session) :mode-id) "ask")
+              (agent-shell-cockpit-session--on-event '((:event . clean-up)))
+              (should (equal (nth 1 (map-elt (car (map-elt (agent-shell-cockpit-store-read root) 'sessions))
+                                            'settings)) '((id . "mode") (value . "ask"))))))
+        (when (buffer-live-p buffer) (kill-buffer buffer))))))
+
+(ert-deftest cockpit-workspace-header-retains-title-and-location ()
+  (agent-shell-cockpit-test-with-root
+    (let ((workspace (agent-shell-cockpit-workspace-create :name "alpha")))
+      (with-temp-buffer
+        (agent-shell-cockpit-workspace-view-mode)
+        (setq agent-shell-cockpit-workspace-view--root (map-elt workspace 'root))
+        (agent-shell-cockpit-workspace-view-refresh)
+        (goto-char (point-max))
+        (should (string-match-p "alpha" (agent-shell-cockpit-ui-header-context)))
+        ;; Temporary roots can be under HOME or long enough to be truncated.
+        (should (equal (agent-shell-cockpit-ui-one-line
+                        (format "alpha · %s"
+                                (abbreviate-file-name (map-elt workspace 'root))))
+                       (agent-shell-cockpit-ui-header-context)))
+        (should (equal header-line-format agent-shell-cockpit-ui-header-line-format))))))
 
 (ert-deftest agent-shell-cockpit-dashboard-renders-workspace-and-unassigned ()
   (agent-shell-cockpit-test-with-root
@@ -218,7 +308,7 @@
             (should (equal default-directory (map-elt workspace 'root)))
             (should (string-match-p "Agents" (buffer-string)))
             (should (string-match-p "No context files" (buffer-string)))
-            (should (string-match-p "Repositories" (buffer-string))))
+            (should (string-match-p "Worktrees" (buffer-string))))
         (when (buffer-live-p detail) (kill-buffer detail))))))
 
 (ert-deftest agent-shell-cockpit-workspace-repository-opener-is-configurable ()
@@ -240,7 +330,7 @@
         (agent-shell-cockpit-workspace-view-refresh)
         (goto-char (point-min))
         (search-forward "service")
-        (let ((agent-shell-cockpit-repository-open-function
+        (let ((agent-shell-cockpit-worktree-open-function
                (lambda (directory) (setq opened directory))))
           (agent-shell-cockpit-workspace-view-open))
         (should (equal opened expected))))))
@@ -342,7 +432,7 @@
                (agent-shell-cockpit-dashboard--live-agent-at-point-p))))
         (when (buffer-live-p agent) (kill-buffer agent))))))
 
-(ert-deftest agent-shell-cockpit-workspace-detail-renders-repositories-and-history ()
+(ert-deftest agent-shell-cockpit-workspace-detail-renders-worktrees-and-history ()
   (agent-shell-cockpit-test-with-root
     (let ((workspace (agent-shell-cockpit-workspace-create
                       :name "alpha")))
@@ -361,13 +451,13 @@
         (let* ((text (buffer-string))
                (agents (string-match "^Agents" text))
                (contexts (string-match "^Context" text))
-               (repositories (string-match "^Repositories" text)))
-          (should (< agents contexts repositories))
+               (worktrees (string-match "^Worktrees" text)))
+          (should (< agents contexts worktrees))
           (should (string-match-p "No context files" text))
           (should (string-match-p "Historical session" text))
           (should (string-match-p "● history" text))
           (should-not (string-match-p "● idle" text))
-          (should (string-match-p "No repositories" text)))))))
+          (should (string-match-p "No worktrees" text)))))))
 
 (ert-deftest agent-shell-cockpit-workspace-forgets-historical-session ()
   (agent-shell-cockpit-test-with-root
@@ -499,67 +589,6 @@
                 (should-not (string-match-p "Latest agent answer"
                                             (buffer-string))))))
         (when (buffer-live-p agent) (kill-buffer agent))))))
-
-(ert-deftest agent-shell-cockpit-allows-pending-permission-without-visiting-agent ()
-  (let ((agent (generate-new-buffer " *cockpit permission agent*"))
-        (origin (current-buffer))
-        allowed)
-    (unwind-protect
-        (progn
-          (with-current-buffer agent
-            (insert "Allow (y)")
-            (let ((map (make-sparse-keymap)))
-              (define-key map (kbd "y")
-                          (lambda () (interactive) (setq allowed t)))
-              (add-text-properties
-               (- (point) 2) (1- (point))
-               (list 'agent-shell-permission-button t 'keymap map))))
-          (agent-shell-cockpit-session-allow-once agent)
-          (should allowed)
-          (should (eq (current-buffer) origin)))
-      (when (buffer-live-p agent) (kill-buffer agent)))))
-
-(ert-deftest agent-shell-cockpit-refuses-allow-without-pending-permission ()
-  (let ((agent (generate-new-buffer " *cockpit no permission agent*")))
-    (unwind-protect
-        (should-error (agent-shell-cockpit-session-allow-once agent)
-                      :type 'user-error)
-      (when (buffer-live-p agent) (kill-buffer agent)))))
-
-(ert-deftest agent-shell-cockpit-delegates-all-native-permission-actions ()
-  (let ((agent (generate-new-buffer " *cockpit permission actions*"))
-        invoked)
-    (unwind-protect
-        (progn
-          (with-current-buffer agent
-            (insert "permission")
-            (let ((map (make-sparse-keymap)))
-              (dolist (entry '(("y" . allow-once)
-                               ("!" . allow-always)
-                               ("C-c C-c" . reject)
-                               ("v" . view-diff)))
-                (let ((action (cdr entry)))
-                  (define-key map (kbd (car entry))
-                              (lambda ()
-                                (interactive)
-                                (push action invoked)))))
-              (add-text-properties
-               (1- (point)) (point)
-               (list 'agent-shell-permission-button t 'keymap map))))
-          (dolist (entry '(("y" . allow-once)
-                           ("!" . allow-always)
-                           ("C-c C-c" . reject)
-                           ("v" . view-diff)))
-            (should
-             (agent-shell-cockpit-session-permission-action-available-p
-              agent (car entry)))
-            (agent-shell-cockpit-session-permission-action agent (car entry)))
-          (should (equal (sort invoked
-                               (lambda (left right)
-                                 (string-lessp (symbol-name left)
-                                               (symbol-name right))))
-                         '(allow-always allow-once reject view-diff))))
-      (when (buffer-live-p agent) (kill-buffer agent)))))
 
 (ert-deftest agent-shell-cockpit-context-expands-file-inline ()
   (agent-shell-cockpit-test-with-root

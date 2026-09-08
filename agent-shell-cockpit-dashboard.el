@@ -1,6 +1,8 @@
 ;;; agent-shell-cockpit-dashboard.el --- Cockpit workspace dashboard -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 to-bak
+;; Author: to-bak
+;; Assisted-by: Codex:GPT-6
 
 ;; SPDX-License-Identifier: MIT
 
@@ -16,7 +18,7 @@
 (require 'transient)
 (require 'agent-shell-cockpit-agent)
 (require 'agent-shell-cockpit-session)
-(require 'agent-shell-cockpit-skills)
+(require 'agent-shell-cockpit-instructions)
 (require 'agent-shell-cockpit-store)
 (require 'agent-shell-cockpit-ui)
 (require 'agent-shell-cockpit-workspace)
@@ -76,14 +78,15 @@ Each function receives WORKSPACES and AGENTS."
                  (agent-shell-cockpit-session-live-buffers workspace)))
         (contexts (length
                    (agent-shell-cockpit-workspace-context-paths workspace)))
-        (repositories
+        (worktrees
          (length
-          (agent-shell-cockpit-workspace-active-repositories workspace))))
+          (agent-shell-cockpit-workspace-active-worktrees workspace))))
     (propertize
-     (format "%d %s  %d %s  %d %s"
+     (format "%d %s  %d %s  %d %s%s"
              agents (agent-shell-cockpit-ui-icon 'agent)
              contexts (agent-shell-cockpit-ui-icon 'context)
-             repositories (agent-shell-cockpit-ui-icon 'repository))
+             worktrees (agent-shell-cockpit-ui-icon 'repository)
+             (if (map-elt workspace 'operation) " · recovery required (RET, R)" ""))
      'face 'agent-shell-cockpit-secondary)))
 
 (defun agent-shell-cockpit-dashboard-insert-agents (_workspaces agents)
@@ -91,7 +94,8 @@ Each function receives WORKSPACES and AGENTS."
   (magit-insert-section
       (agent-shell-cockpit-section 'live-agents nil :kind 'group)
     (magit-insert-heading
-      (propertize (format "Agents (%d)" (length agents))
+      (propertize (format "Agents (%d) · %d need attention" (length agents)
+                          (seq-count (lambda (buffer) (eq (agent-shell-cockpit-session-status buffer) 'attention)) agents))
                   'font-lock-face 'magit-section-heading))
     (magit-insert-section-body
       (if agents
@@ -151,7 +155,7 @@ Each function receives WORKSPACES and AGENTS."
       ((or 'root 'group)
        nil)
       ('workspace
-         (if (eq (map-elt object 'kind) 'invalid)
+       (if (eq (map-elt object 'kind) 'invalid)
            (find-file (agent-shell-cockpit-store-metadata-path
                        (map-elt object 'root)))
          (agent-shell-cockpit-workspace-view object)))
@@ -188,11 +192,14 @@ Each function receives WORKSPACES and AGENTS."
   (agent-shell-cockpit-workspace-edit-context
    (agent-shell-cockpit-dashboard-selected-workspace)))
 
+(defvar agent-shell-cockpit-dashboard--origin-directory nil
+  "Directory from which the dashboard was last opened.")
+
 (defun agent-shell-cockpit-start-agent ()
-  "Configure launch skills, then choose and start an agent."
+  "Select instructions and start a standalone native agent."
   (interactive)
-  (agent-shell-cockpit-skills-launch
-   (agent-shell-cockpit-dashboard-selected-workspace)))
+  (agent-shell-cockpit-agent-launch
+   nil (or agent-shell-cockpit-dashboard--origin-directory default-directory)))
 
 (defun agent-shell-cockpit-attach-session ()
   "Attach the selected unassigned session to a compatible workspace."
@@ -205,7 +212,7 @@ Each function receives WORKSPACES and AGENTS."
                         (eq (map-elt workspace 'kind) 'workspace))
                       (agent-shell-cockpit-store-discover)))
          (choices (mapcar (lambda (workspace)
-                            (cons (map-elt workspace 'title) workspace))
+                            (cons (format "%s — %s" (map-elt workspace 'title) (map-elt workspace 'root)) workspace))
                           workspaces))
          (workspace (cdr (assoc (completing-read "Attach to workspace: "
                                                  choices nil t)
@@ -254,42 +261,65 @@ Each function receives WORKSPACES and AGENTS."
          (eq (map-elt object 'kind) 'invalid))))
 
 (transient-define-prefix agent-shell-cockpit-archive-dispatch ()
-  "Invoke an archive command."
-  [["Archives"
-    ("l" "Browse archived workspaces" agent-shell-cockpit-archives)]])
+			 "Invoke an archive command."
+			 [["Archives"
+			   ("l" "Browse archived workspaces" agent-shell-cockpit-archives)]])
 
 (transient-define-prefix agent-shell-cockpit-dashboard-dispatch ()
-  "Invoke a Cockpit dashboard command from the available commands."
-  ["Workspace and agent commands"
-   [("w" "Create workspace" agent-shell-cockpit-create-workspace)
-    ("e" "Edit context" agent-shell-cockpit-edit-context
-     :inapt-if-not agent-shell-cockpit-dashboard--workspace-at-point-p)
-    ("A" "Archive workspace" agent-shell-cockpit-archive-workspace
-     :inapt-if-not agent-shell-cockpit-dashboard--workspace-at-point-p)
-    ("E" "Repair metadata" agent-shell-cockpit-repair-workspace
-     :inapt-if-not agent-shell-cockpit-dashboard--invalid-at-point-p)]
-   [("s" "Start agent" agent-shell-cockpit-start-agent
-     :inapt-if-not agent-shell-cockpit-dashboard--workspace-at-point-p)
-    ("+" "Attach agent" agent-shell-cockpit-attach-session
-     :inapt-if-not agent-shell-cockpit-dashboard--unassigned-at-point-p)
-    ("a" "Agent actions" agent-shell-cockpit-agent-actions
-     :inapt-if-not agent-shell-cockpit-dashboard--live-agent-at-point-p)
-    ("K" "Kill agent" agent-shell-cockpit-agent-kill
-     :inapt-if-not agent-shell-cockpit-dashboard--live-agent-at-point-p)]
-   [("l" "Archives" agent-shell-cockpit-archive-dispatch)]]
-  ["Essential commands"
-   [("r" "       Refresh current buffer" agent-shell-cockpit-refresh)
-    ("q" "       Bury current buffer" agent-shell-cockpit-quit)
-    ("<tab>" "   Toggle section at point" agent-shell-cockpit-toggle-section)
-    ("<return>" "Visit thing at point" agent-shell-cockpit-open)]
-   [("n" "       Next section" agent-shell-cockpit-next)
-    ("p" "       Previous section" agent-shell-cockpit-previous)]])
+			 "Invoke a Cockpit dashboard command from the available commands."
+			 ["Workspace and agent commands"
+			  [("w" "Create workspace" agent-shell-cockpit-create-workspace)
+			   ("e" "Edit context" agent-shell-cockpit-edit-context
+			    :inapt-if-not agent-shell-cockpit-dashboard--workspace-at-point-p)
+			   ("A" "Archive workspace" agent-shell-cockpit-archive-workspace
+			    :inapt-if-not agent-shell-cockpit-dashboard--workspace-at-point-p)
+			   ("E" "Repair metadata" agent-shell-cockpit-repair-workspace
+			    :inapt-if-not agent-shell-cockpit-dashboard--invalid-at-point-p)]
+			  [("s" "Start agent" agent-shell-cockpit-start-agent)
+			   ("S" "Start agent" agent-shell-cockpit-start-agent)
+			   ("+" "Attach agent" agent-shell-cockpit-attach-session
+			    :inapt-if-not agent-shell-cockpit-dashboard--unassigned-at-point-p)
+			   ("a" "Agent actions" agent-shell-cockpit-agent-actions
+			    :inapt-if-not agent-shell-cockpit-dashboard--live-agent-at-point-p)
+			   ("K" "Kill agent" agent-shell-cockpit-agent-kill
+			    :inapt-if-not agent-shell-cockpit-dashboard--live-agent-at-point-p)]
+			  [("l" "Archives" agent-shell-cockpit-archive-dispatch)]]
+			 ["Instruction files"
+			  ("I" "Visit instruction" agent-shell-cockpit-visit-instruction)
+			  ]
+			 ["Agent navigation"
+			  ("v" "Preview agent" agent-shell-cockpit-agent-preview)
+			  ("]" "Next attention" agent-shell-cockpit-next-attention)]
+			 ["Essential commands"
+			  [("r" "Refresh" agent-shell-cockpit-refresh)
+			   ("q" "Return / bury buffer" agent-shell-cockpit-quit)
+			   ("TAB" "Toggle section" agent-shell-cockpit-toggle-section)
+			   ("RET" "Visit thing at point" agent-shell-cockpit-open)]
+			  [("n" "Next section" agent-shell-cockpit-next)
+			   ("p" "Previous section" agent-shell-cockpit-previous)
+			   ("M-<" "First section" agent-shell-cockpit-first)
+			   ("M->" "Last section" agent-shell-cockpit-last)]
+			  [("<down>" "Next section" agent-shell-cockpit-next)
+			   ("<up>" "Previous section" agent-shell-cockpit-previous)
+			   ("C-n" "Next line" next-line)
+			   ("C-p" "Previous line" previous-line)]
+			  [("j" "Next section (Evil)" agent-shell-cockpit-next
+			    :if (lambda () (bound-and-true-p evil-local-mode)))
+			   ("k" "Previous section (Evil)" agent-shell-cockpit-previous
+			    :if (lambda () (bound-and-true-p evil-local-mode)))]]
+			 [:hide (lambda () t)
+				("<tab>" "Toggle section" agent-shell-cockpit-toggle-section)
+				("<return>" "Visit thing at point" agent-shell-cockpit-open)])
 
 (defvar-keymap agent-shell-cockpit-mode-map
   :parent agent-shell-cockpit-ui-mode-map
+  "v" #'agent-shell-cockpit-agent-preview
+  "I" #'agent-shell-cockpit-visit-instruction
   "w" #'agent-shell-cockpit-create-workspace
   "e" #'agent-shell-cockpit-edit-context
   "s" #'agent-shell-cockpit-start-agent
+  "S" #'agent-shell-cockpit-start-agent
+  "]" #'agent-shell-cockpit-next-attention
   "+" #'agent-shell-cockpit-attach-session
   "a" #'agent-shell-cockpit-agent-actions
   "A" #'agent-shell-cockpit-archive-workspace
@@ -306,23 +336,6 @@ Each function receives WORKSPACES and AGENTS."
               agent-shell-cockpit-ui--dispatch-function
               #'agent-shell-cockpit-dashboard-dispatch)
   (agent-shell-cockpit-agent-preview-mode 1))
-
-;;;###autoload
-(defun agent-shell-cockpit ()
-  "Open the agent-shell cockpit workspace dashboard."
-  (interactive)
-  (let ((origin (current-buffer))
-        (buffer (get-buffer-create agent-shell-cockpit-buffer-name)))
-    (setq agent-shell-cockpit--buffer buffer)
-    (switch-to-buffer buffer)
-    (unless (derived-mode-p 'agent-shell-cockpit-mode)
-      (agent-shell-cockpit-mode))
-    (unless (or (eq origin buffer)
-                (with-current-buffer origin
-                  (or (derived-mode-p 'agent-shell-cockpit-ui-mode)
-                      (derived-mode-p 'agent-shell-mode))))
-      (setq agent-shell-cockpit-ui-return-buffer origin))
-    (agent-shell-cockpit-dashboard-refresh)))
 
 (provide 'agent-shell-cockpit-dashboard)
 
