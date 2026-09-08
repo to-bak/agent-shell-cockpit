@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        emacs: ["29.1", "31.1"]
+        emacs: ["31.1"]
         dependencies: [minimum, current]
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +32,12 @@ jobs:
       - name: Select declared minimum direct dependencies
         if: matrix.dependencies == 'minimum'
         run: |
+          # The older sources need dependencies that current releases may omit.
+          emacs -Q --batch \
+            --eval "(require 'package)" \
+            --eval "(package-initialize)" \
+            --eval "(package-install 'dash)" \
+            --eval "(package-install 'compat)"
           mkdir -p "$RUNNER_TEMP/cockpit-minimum/agent-shell" "$RUNNER_TEMP/cockpit-minimum/ui"
           curl -fsSL https://api.github.com/repos/xenodium/agent-shell/tarball/refs/tags/v0.75.2 |
             tar -xz -C "$RUNNER_TEMP/cockpit-minimum/agent-shell" --strip-components=1

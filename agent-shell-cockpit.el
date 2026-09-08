@@ -5,7 +5,7 @@
 ;; Author: to-bak
 ;; Assisted-by: Codex:GPT-6
 ;; Version: 0.2.0
-;; Package-Requires: ((emacs "29.1") (agent-shell "0.75.2")
+;; Package-Requires: ((emacs "31.1") (agent-shell "0.75.2")
 ;;                    (magit-section "4.0.0") (transient "0.7.0"))
 ;; Keywords: convenience, tools
 ;; URL: https://github.com/to-bak/agent-shell-cockpit
