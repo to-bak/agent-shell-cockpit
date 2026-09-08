@@ -1,6 +1,8 @@
 ;;; agent-shell-cockpit-store.el --- Workspace persistence for cockpit -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 to-bak
+;; Author: to-bak
+;; Assisted-by: Codex:GPT-6
 
 ;; SPDX-License-Identifier: MIT
 
@@ -10,12 +12,14 @@
 
 ;;; Code:
 
+(require 'cl-lib)
+(require 'org-id)
 (require 'json)
 (require 'map)
 (require 'seq)
 (require 'subr-x)
 
-(defconst agent-shell-cockpit-store-schema-version 2
+(defconst agent-shell-cockpit-store-schema-version 4
   "Current workspace metadata schema version.")
 
 (defcustom agent-shell-cockpit-context-directory-name "context"
@@ -23,7 +27,7 @@
   :type 'string
   :group 'agent-shell-cockpit)
 
-(defcustom agent-shell-cockpit-repositories-directory-name "repositories"
+(defcustom agent-shell-cockpit-worktrees-directory-name "worktrees"
   "Directory name used for Git worktrees inside each workspace."
   :type 'string
   :group 'agent-shell-cockpit)
@@ -78,35 +82,6 @@ When nil, use a .archive directory below
                (not (string-empty-p (map-elt record key))))
     (error "Missing or invalid %s" key)))
 
-(defun agent-shell-cockpit-store--context-title (root &optional fallback)
-  "Return the first Org context title below ROOT, or FALLBACK.
-When FALLBACK is nil, use ROOT's directory name."
-  (let* ((directory (expand-file-name
-                     agent-shell-cockpit-context-directory-name root))
-         (files (when (file-directory-p directory)
-                  (sort (directory-files-recursively directory "\\.org\\'")
-                        #'string-lessp))))
-    (or (seq-some
-         (lambda (file)
-           (with-temp-buffer
-             (insert-file-contents file)
-             (goto-char (point-min))
-             (when (re-search-forward
-                    "^#\\+TITLE:[[:space:]]*\\(.+\\)$" nil t)
-               (string-trim (match-string 1)))))
-         files)
-        fallback
-        (file-name-nondirectory (directory-file-name root)))))
-
-(defun agent-shell-cockpit-store--archive-directory-name (root)
-  "Return the original workspace name represented by archived ROOT."
-  (let ((name (file-name-nondirectory (directory-file-name root))))
-    (if (string-match
-         "\\`\\(.+\\)--[[:xdigit:]]\\{8\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{12\\}\\'"
-         name)
-        (match-string 1 name)
-      name)))
-
 (defun agent-shell-cockpit-store--archived-root-p (root)
   "Return non-nil when ROOT is below the configured archive directory."
   (file-in-directory-p
@@ -140,19 +115,30 @@ When FALLBACK is nil, use ROOT's directory name."
         (map-elt record 'sessions))
   (setq root (file-name-as-directory (expand-file-name root)))
   (let* ((archived (agent-shell-cockpit-store--archived-root-p root))
-         (stored-name (map-elt record 'name))
          (name
           (if archived
-              (if (and (stringp stored-name)
-                       (not (string-empty-p stored-name)))
-                  stored-name
-                (agent-shell-cockpit-store--archive-directory-name root))
+              (map-elt record 'name)
             (file-name-nondirectory (directory-file-name root)))))
     (agent-shell-cockpit-store-set record 'root root)
     (agent-shell-cockpit-store-set record 'kind 'workspace)
     (agent-shell-cockpit-store-set record 'name name)
     (agent-shell-cockpit-store-set
-     record 'title (agent-shell-cockpit-store--context-title root name))
+     record 'title
+     (or (map-elt record 'displayTitle)
+         name))
+    (dolist (key '(worktrees))
+      (unless (listp (map-elt record key))
+        (error "Invalid %s collection" key)))
+    (dolist (key '(id name displayTitle worktreeDirectory))
+      (agent-shell-cockpit-store--required-string record key))
+    (dolist (entry (map-elt record 'worktrees))
+      (agent-shell-cockpit-store--required-string entry 'name)
+      (unless (string-match-p "\\`[[:alnum:]][[:alnum:]_.-]*\\'" (map-elt entry 'name))
+        (error "Invalid repository name")))
+    (when-let* ((directory (map-elt record 'worktreeDirectory)))
+      (unless (and (stringp directory)
+                   (string-match-p "\\`[[:alnum:]][[:alnum:]_.-]*\\'" directory))
+        (error "Invalid worktree directory")))
     (agent-shell-cockpit-store-set
      record 'state (if archived "archived" "active"))
     record))
@@ -165,12 +151,14 @@ Signal an error when metadata is missing or invalid."
       (error "Missing metadata file: %s" path))
     (with-temp-buffer
       (insert-file-contents path)
-      (agent-shell-cockpit-store--validate
-       (json-parse-buffer :object-type 'alist
-                          :array-type 'list
-                          :null-object nil
-                          :false-object nil)
-       root))))
+      (let ((record (json-parse-buffer :object-type 'alist :array-type 'array
+                                       :null-object nil :false-object nil)))
+        (dolist (key '(sessions worktrees))
+          (when (vectorp (map-elt record key))
+            (agent-shell-cockpit-store-set record key (append (map-elt record key) nil))))
+        (agent-shell-cockpit-store--validate record root)
+        (agent-shell-cockpit-store-set record 'revision (secure-hash 'sha256 (current-buffer)))
+        record))))
 
 (defun agent-shell-cockpit-store--invalid-record (root err)
   "Return an invalid workspace record for ROOT and ERR."
@@ -204,53 +192,95 @@ workspace records are included so the UI can report them."
          (error (agent-shell-cockpit-store--invalid-record root err))))
      (agent-shell-cockpit-store--workspace-directories parent))))
 
-(defun agent-shell-cockpit-store--serializable-record (record)
-  "Return the deliberately small persistent subset of RECORD."
-  (let ((serialized
-         `((schemaVersion . ,agent-shell-cockpit-store-schema-version)
-           (sessions
-            . ,(vconcat
-                (mapcar
-                 (lambda (session)
-                   (let ((copy `((agentId . ,(map-elt session 'agentId))
-                                 (sessionId . ,(map-elt session 'sessionId)))))
-                     (when (map-elt session 'title)
-                       (setq copy
-                             (append copy
-                                     `((title . ,(map-elt session 'title))))))
-                     copy))
-                 (map-elt record 'sessions)))))))
-    (when (stringp (map-elt record 'name))
-      (setq serialized
-            (append serialized `((name . ,(map-elt record 'name))))))
-    (when (numberp (map-elt record 'archivedAt))
-      (setq serialized
-            (append serialized
-                    `((archivedAt . ,(map-elt record 'archivedAt))))))
-    serialized))
+(defun agent-shell-cockpit-store--fields (record fields)
+  "Copy persistent FIELDS from RECORD, omitting absent values."
+  (delq nil (mapcar (lambda (key)
+                      (when (map-elt record key)
+                        (cons key (map-elt record key)))) fields)))
 
-(defun agent-shell-cockpit-store-write (record)
-  "Atomically persist workspace RECORD and return it."
-  (let* ((root (map-elt record 'root))
-         (metadata-directory
-          (expand-file-name agent-shell-cockpit-store-metadata-directory root))
-         (path (agent-shell-cockpit-store-metadata-path root)))
-    (unless root
-      (error "Workspace record has no runtime root"))
-    (make-directory metadata-directory t)
-    (let ((temporary (make-temp-file
-                      (expand-file-name ".workspace-" metadata-directory))))
+(defun agent-shell-cockpit-store--serializable-record (record)
+  "Return the validated persistent subset of RECORD."
+  (append
+   `((schemaVersion . ,agent-shell-cockpit-store-schema-version)
+     (sessions . ,(vconcat
+                   (mapcar
+                    (lambda (session)
+                      (agent-shell-cockpit-store--fields
+                       session '(agentId sessionId title cwd displayId)))
+                    (map-elt record 'sessions)))))
+   (agent-shell-cockpit-store--fields
+    record '(id name displayTitle archivedAt operation worktreeDirectory))
+   `((worktrees . ,(vconcat (map-elt record 'worktrees))))))
+
+(defvar agent-shell-cockpit-store--locked-path nil
+  "Metadata path locked by the current synchronous update.")
+
+(defun agent-shell-cockpit-store--with-lock (path function)
+  "Call FUNCTION while exclusively locking metadata PATH.
+A surviving lock after a crash requires explicit inspection and removal."
+  (if (equal path agent-shell-cockpit-store--locked-path)
+      (funcall function)
+    (let ((lock (concat path ".write-lock")))
+      (condition-case nil
+          (make-directory lock)
+        (file-already-exists
+         (user-error "Workspace is locked: %s (inspect before removing)" lock)))
       (unwind-protect
-          (progn
-            (with-temp-file temporary
-              (insert (json-serialize
-                       (agent-shell-cockpit-store--serializable-record record)
-                       :null-object nil :false-object nil))
-              (insert "\n"))
-            (rename-file temporary path t))
-        (when (file-exists-p temporary)
-          (delete-file temporary))))
-    record))
+          (let ((agent-shell-cockpit-store--locked-path path))
+            (funcall function))
+        (delete-directory lock)))))
+
+(defun agent-shell-cockpit-store--revision (path)
+  "Return the content revision of PATH, or nil when missing."
+  (when (file-exists-p path)
+    (with-temp-buffer
+      (insert-file-contents path)
+      (secure-hash 'sha256 (current-buffer)))))
+
+(defun agent-shell-cockpit-store-write (record &optional repair)
+  "Atomically persist workspace RECORD and return it.
+Reject stale writes.  REPAIR explicitly permits replacing invalid metadata."
+  (let ((root (map-elt record 'root)))
+    (unless root (error "Workspace record has no runtime root"))
+    (let* ((path (agent-shell-cockpit-store-metadata-path root))
+           (directory (file-name-directory path)))
+      (make-directory directory t)
+      (agent-shell-cockpit-store--with-lock
+       path
+       (lambda ()
+         (unless (or repair
+                     (equal (map-elt record 'revision)
+                            (agent-shell-cockpit-store--revision path)))
+           (user-error "Workspace changed; refresh before retrying"))
+         (agent-shell-cockpit-store--validate record root)
+         (let ((temporary (make-temp-file
+                           (expand-file-name ".workspace-" directory))))
+           (unwind-protect
+               (progn
+                 (with-temp-file temporary
+                   (insert (json-serialize
+                            (agent-shell-cockpit-store--serializable-record record)
+                            :null-object nil :false-object nil) "\n"))
+                 (rename-file temporary path t)
+                 (agent-shell-cockpit-store-set
+                  record 'schemaVersion agent-shell-cockpit-store-schema-version)
+                 (agent-shell-cockpit-store-set
+                  record 'revision (agent-shell-cockpit-store--revision path)))
+             (when (file-exists-p temporary) (delete-file temporary))))))
+      record)))
+
+(defun agent-shell-cockpit-store-update (root function &optional operation)
+  "Apply FUNCTION to fresh metadata at ROOT and atomically persist it.
+OPERATION permits an update during an explicitly coordinated lifecycle job."
+  (let ((path (agent-shell-cockpit-store-metadata-path root)))
+    (agent-shell-cockpit-store--with-lock
+     path
+     (lambda ()
+       (let ((record (agent-shell-cockpit-store-read root)))
+         (when (and (map-elt record 'operation) (not operation))
+           (user-error "Workspace has an incomplete lifecycle operation"))
+         (funcall function record)
+         (agent-shell-cockpit-store-write record))))))
 
 (provide 'agent-shell-cockpit-store)
 

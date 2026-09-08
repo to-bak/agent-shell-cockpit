@@ -1,0 +1,94 @@
+;;; agent-shell-cockpit-integration-test.el --- Real native API tests -*- lexical-binding: t; -*-
+
+;; Intentionally does not load the unit helper that provides a fake agent-shell.
+(require 'ert)
+(require 'cl-lib)
+(require 'agent-shell)
+(require 'agent-shell-cockpit)
+
+(defun cockpit-integration-agent (directory &optional session)
+  "Create a native-state fixture in DIRECTORY with SESSION, without transport."
+  (let ((buffer (generate-new-buffer " *cockpit native fixture*")))
+    (with-current-buffer buffer
+      (setq major-mode 'agent-shell-mode default-directory directory)
+      (setq-local shell-maker--config 'fixture)
+      (setq-local agent-shell--state
+                  `((:buffer . ,buffer) (:event-subscriptions . nil)
+                    (:supports-session-fork . t)
+                    (:agent-config . ((:identifier . fixture)))
+                    (:session . ((:id . ,(or session "native-session")))))))
+    buffer))
+
+(ert-deftest cockpit-integration-native-reload-and-fork-retain-membership ()
+  (let* ((root (make-temp-file "cockpit-native-" t))
+         (agent-shell-cockpit-workspace-directory root)
+         (agent-shell-cockpit-refresh-interval nil)
+         (agent-shell-prefer-viewport-interaction nil)
+         (workspace (agent-shell-cockpit-workspace-create :name "native"))
+         (directory (expand-file-name "worktrees/subdirectory" (map-elt workspace 'root)))
+         (origin (current-buffer)) old created)
+    (unwind-protect
+        (progn
+          (make-directory directory t)
+          (setq old (cockpit-integration-agent directory))
+          (agent-shell-cockpit-session-attach old workspace)
+          (with-current-buffer old (setq agent-shell-cockpit-session-return-buffer origin))
+          (cl-letf (((symbol-function 'agent-shell--active-requests-p) (lambda (_) nil))
+                    ((symbol-function 'shell-maker-set-buffer-name) #'ignore)
+                    ((symbol-function 'agent-shell--display-buffer) #'identity)
+                    ((symbol-function 'agent-shell--start)
+                     (lambda (&rest arguments)
+                       (let ((buffer (cockpit-integration-agent
+                                      default-directory (plist-get arguments :session-id))))
+                         (push buffer created) buffer))))
+            (agent-shell-cockpit-session-invoke old #'agent-shell-reload)
+            (should-not (buffer-live-p old))
+            (let ((replacement (car created)))
+              (should (member replacement (agent-shell-cockpit-session-live-buffers workspace)))
+              (should (eq (buffer-local-value 'agent-shell-cockpit-session-return-buffer replacement) origin))
+              (should (file-equal-p (buffer-local-value 'default-directory replacement) directory))
+              (agent-shell-cockpit-session-invoke replacement #'agent-shell-fork)
+              (should (buffer-live-p replacement))
+              (should (= 2 (length (agent-shell-cockpit-session-live-buffers workspace)))))))
+      (dolist (buffer (cons old created)) (when (buffer-live-p buffer) (kill-buffer buffer)))
+      (delete-directory root t))))
+
+(ert-deftest cockpit-integration-native-standalone-cwd-and-context ()
+  (let* ((directory (make-temp-file "cockpit-standalone-" t))
+         (target (agent-shell-cockpit-session-target directory))
+         (agent-shell-prefer-viewport-interaction nil) created text)
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell--auto-preferred-config)
+                   (lambda () '((:identifier . fixture))))
+                  ((symbol-function 'agent-shell--start)
+                   (lambda (&rest _)
+                     (setq created (cockpit-integration-agent (agent-shell-cwd)))))
+                  ((symbol-function 'agent-shell--display-and-insert-context)
+                   (lambda (_buffer input) (setq text input))))
+          (let ((result (agent-shell-cockpit-session-start-target target "Only this context")))
+            (should (eq result created))
+            (should (equal text "Only this context"))
+            (should (file-equal-p (buffer-local-value 'default-directory created) directory))
+            (should (buffer-local-value 'agent-shell-cockpit-session-standalone-p created))
+            (should (memq created (agent-shell-cockpit-session-unassigned-buffers)))
+            (should-not (file-exists-p (agent-shell-cockpit-store-metadata-path directory)))))
+      (when (buffer-live-p created) (kill-buffer created))
+      (delete-directory directory t))))
+
+(ert-deftest cockpit-integration-resume-honors-recorded-subdirectory ()
+  (let* ((root (make-temp-file "cockpit-resume-" t))
+         (agent-shell-cockpit-workspace-directory root)
+         (workspace (agent-shell-cockpit-workspace-create :name "native"))
+         (directory (expand-file-name "context" (map-elt workspace 'root)))
+         (agent-shell-agent-configs '((:identifier fixture))) created)
+    (unwind-protect
+        (cl-letf (((symbol-function 'agent-shell-start)
+                   (lambda (&rest _) (setq created (cockpit-integration-agent (agent-shell-cwd))))))
+          (agent-shell-cockpit-session-resume
+           workspace '((agentId . "fixture") (sessionId . "saved") (cwd . "context/")))
+          (should (file-equal-p (buffer-local-value 'default-directory created) directory)))
+      (when (buffer-live-p created) (kill-buffer created))
+      (delete-directory root t))))
+
+(provide 'agent-shell-cockpit-integration-test)
+;;; agent-shell-cockpit-integration-test.el ends here

@@ -7,11 +7,14 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        emacs: ["29.1", "31.1"]
     steps:
       - uses: actions/checkout@v4
       - uses: purcell/setup-emacs@master
         with:
-          version: "31.1"
+          version: ${{ matrix.emacs }}
       - name: Install test, compile, and lint dependencies
         run: |
           emacs -Q --batch \
@@ -22,9 +25,11 @@ jobs:
             --eval "(package-install 'agent-shell)" \
             --eval "(package-install 'magit-section)" \
             --eval "(package-install 'transient)" \
-            --eval "(package-install 'package-lint)"
+            --eval "(package-install 'package-lint)" \
+            --eval "(package-install 'evil)" \
+            --eval "(package-install 'org-roam)"
       - name: Run isolated tests
-        run: make test STRAIGHT_BUILD=~/.emacs.d/elpa
+        run: make test integration optional-integration smoke STRAIGHT_BUILD=~/.emacs.d/elpa
       - name: Compile and check documentation
         run: make compile checkdoc STRAIGHT_BUILD=~/.emacs.d/elpa
       - name: Package lint

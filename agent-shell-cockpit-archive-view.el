@@ -1,6 +1,8 @@
 ;;; agent-shell-cockpit-archive-view.el --- Archived Cockpit workspaces -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 to-bak
+;; Author: to-bak
+;; Assisted-by: Codex:GPT-6
 
 ;; SPDX-License-Identifier: MIT
 
@@ -17,6 +19,7 @@
 (require 'agent-shell-cockpit-store)
 (require 'agent-shell-cockpit-ui)
 (require 'agent-shell-cockpit-workspace)
+(require 'agent-shell-cockpit-lifecycle)
 
 (defvar agent-shell-cockpit--buffer)
 (declare-function agent-shell-cockpit "agent-shell-cockpit-dashboard")
@@ -153,8 +156,7 @@ stored explicitly."
 (defun agent-shell-cockpit-archive-view-open ()
   "Open the archived workspace directory at point."
   (interactive)
-  (dired (map-elt (agent-shell-cockpit-archive-view--selected-workspace)
-                  'root)))
+  (agent-shell-cockpit-workspace-view (agent-shell-cockpit-archive-view--selected-workspace)))
 
 (defun agent-shell-cockpit-archive-view-delete ()
   "Permanently delete the archived workspace at point after confirmation."
@@ -167,9 +169,9 @@ stored explicitly."
                            "all files?  This cannot be undone. ")
                    name))
       (agent-shell-cockpit-workspace-delete-archive workspace)
-      (when-let* ((detail (get-buffer (format "*Cockpit: %s*"
-                                               (map-elt workspace 'name)))))
-        (kill-buffer detail))
+      (dolist (detail (buffer-list))
+        (when (equal (buffer-local-value 'agent-shell-cockpit-workspace-view--root detail) root)
+          (kill-buffer detail)))
       (agent-shell-cockpit-archive-view-refresh)
       (message "Deleted archived workspace %s (%s)" name root))))
 
@@ -187,7 +189,8 @@ stored explicitly."
 (transient-define-prefix agent-shell-cockpit-archive-view-dispatch ()
   "Invoke a Cockpit archive command from the available commands."
   ["Archive commands"
-   [("D" "Permanently delete workspace" agent-shell-cockpit-archive-view-delete
+   [("R" "Restore workspace" agent-shell-cockpit-archive-view-restore)
+    ("D" "Permanently delete workspace" agent-shell-cockpit-archive-view-delete
      :inapt-if-not agent-shell-cockpit-archive-view--workspace-at-point-p)
     ("b" "Return to dashboard" agent-shell-cockpit-archive-view-back)]]
   ["Essential commands"
@@ -201,6 +204,7 @@ stored explicitly."
 (defvar-keymap agent-shell-cockpit-archive-view-mode-map
   :parent agent-shell-cockpit-ui-mode-map
   "D" #'agent-shell-cockpit-archive-view-delete
+  "R" #'agent-shell-cockpit-archive-view-restore
   "b" #'agent-shell-cockpit-archive-view-back)
 
 (define-derived-mode agent-shell-cockpit-archive-view-mode
@@ -223,6 +227,19 @@ stored explicitly."
       (agent-shell-cockpit-archive-view-mode))
     (setq agent-shell-cockpit-ui-return-buffer origin)
     (agent-shell-cockpit-archive-view-refresh)))
+
+(declare-function agent-shell-cockpit-workspace-view "agent-shell-cockpit-workspace-view")
+(defvar agent-shell-cockpit-workspace-view--root)
+
+(defun agent-shell-cockpit-archive-view-restore ()
+  "Restore the selected archive into a workspace with retained commits."
+  (interactive)
+  (let* ((workspace (agent-shell-cockpit-archive-view--selected-workspace))
+         (name (read-string "Restore workspace name: " (map-elt workspace 'name))))
+    (when (yes-or-no-p "Restore context and worktrees at their retained commits? ")
+      (let ((restored (agent-shell-cockpit-workspace-restore workspace name)))
+        (agent-shell-cockpit-archive-view-refresh)
+        (agent-shell-cockpit-workspace-view restored)))))
 
 (provide 'agent-shell-cockpit-archive-view)
 

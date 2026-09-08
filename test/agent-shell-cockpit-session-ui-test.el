@@ -109,10 +109,13 @@
                           (cons 'sessionId "session-1")
                           (cons 'title "Resume me")))
            (config '((:identifier . codex)))
+           (agent-shell-cockpit-session-restore-verbosity 'ask)
            (buffer (generate-new-buffer " *resumed agent*"))
            received)
       (unwind-protect
-          (cl-letf (((symbol-function 'agent-shell--resolved-agent-configs)
+          (cl-letf (((symbol-function 'completing-read)
+                     (lambda (&rest _) "last"))
+                    ((symbol-function 'agent-shell--resolved-agent-configs)
                      (lambda () (list config)))
                     ((symbol-function 'agent-shell-start)
                      (lambda (&rest arguments)
@@ -127,8 +130,37 @@
             (should (eq (agent-shell-cockpit-session-resume workspace session)
                         buffer))
             (should (eq (plist-get received :config) config))
-            (should (equal (plist-get received :session-id) "session-1")))
+            (should (equal (plist-get received :session-id) "session-1"))
+            (should (eq (buffer-local-value 'agent-shell-session-restore-verbosity buffer)
+                        'last))
+            (should (eq agent-shell-session-restore-verbosity 'minimal)))
         (when (buffer-live-p buffer) (kill-buffer buffer))))))
+
+(ert-deftest cockpit-native-steer-and-rename-target-selected-agent ()
+  (with-temp-buffer
+    (let ((agent-shell-cockpit-agent--action-buffer (current-buffer))
+          calls)
+      (cl-letf (((symbol-function 'agent-shell-prompt-steer)
+                 (lambda () (interactive) (push (cons 'steer (current-buffer)) calls)))
+                ((symbol-function 'agent-shell-rename-buffer)
+                 (lambda () (interactive) (push (cons 'rename (current-buffer)) calls))))
+        (agent-shell-cockpit-agent-steer)
+        (agent-shell-cockpit-agent-rename)
+        (should (equal calls (list (cons 'rename (current-buffer))
+                                  (cons 'steer (current-buffer)))))))))
+
+(ert-deftest cockpit-workspace-header-retains-title-and-location ()
+  (agent-shell-cockpit-test-with-root
+    (let ((workspace (agent-shell-cockpit-workspace-create :name "alpha")))
+      (with-temp-buffer
+        (agent-shell-cockpit-workspace-view-mode)
+        (setq agent-shell-cockpit-workspace-view--root (map-elt workspace 'root))
+        (agent-shell-cockpit-workspace-view-refresh)
+        (goto-char (point-max))
+        (should (string-match-p "alpha" (agent-shell-cockpit-ui-header-context)))
+        (should (string-match-p (regexp-quote (map-elt workspace 'root))
+                                (agent-shell-cockpit-ui-header-context)))
+        (should (equal header-line-format agent-shell-cockpit-ui-header-line-format))))))
 
 (ert-deftest agent-shell-cockpit-dashboard-renders-workspace-and-unassigned ()
   (agent-shell-cockpit-test-with-root
@@ -218,7 +250,7 @@
             (should (equal default-directory (map-elt workspace 'root)))
             (should (string-match-p "Agents" (buffer-string)))
             (should (string-match-p "No context files" (buffer-string)))
-            (should (string-match-p "Repositories" (buffer-string))))
+            (should (string-match-p "Worktrees" (buffer-string))))
         (when (buffer-live-p detail) (kill-buffer detail))))))
 
 (ert-deftest agent-shell-cockpit-workspace-repository-opener-is-configurable ()
@@ -240,7 +272,7 @@
         (agent-shell-cockpit-workspace-view-refresh)
         (goto-char (point-min))
         (search-forward "service")
-        (let ((agent-shell-cockpit-repository-open-function
+        (let ((agent-shell-cockpit-worktree-open-function
                (lambda (directory) (setq opened directory))))
           (agent-shell-cockpit-workspace-view-open))
         (should (equal opened expected))))))
@@ -342,7 +374,7 @@
                (agent-shell-cockpit-dashboard--live-agent-at-point-p))))
         (when (buffer-live-p agent) (kill-buffer agent))))))
 
-(ert-deftest agent-shell-cockpit-workspace-detail-renders-repositories-and-history ()
+(ert-deftest agent-shell-cockpit-workspace-detail-renders-worktrees-and-history ()
   (agent-shell-cockpit-test-with-root
     (let ((workspace (agent-shell-cockpit-workspace-create
                       :name "alpha")))
@@ -361,13 +393,13 @@
         (let* ((text (buffer-string))
                (agents (string-match "^Agents" text))
                (contexts (string-match "^Context" text))
-               (repositories (string-match "^Repositories" text)))
-          (should (< agents contexts repositories))
+               (worktrees (string-match "^Worktrees" text)))
+          (should (< agents contexts worktrees))
           (should (string-match-p "No context files" text))
           (should (string-match-p "Historical session" text))
           (should (string-match-p "● history" text))
           (should-not (string-match-p "● idle" text))
-          (should (string-match-p "No repositories" text)))))))
+          (should (string-match-p "No worktrees" text)))))))
 
 (ert-deftest agent-shell-cockpit-workspace-forgets-historical-session ()
   (agent-shell-cockpit-test-with-root
@@ -514,7 +546,7 @@
               (add-text-properties
                (- (point) 2) (1- (point))
                (list 'agent-shell-permission-button t 'keymap map))))
-          (agent-shell-cockpit-session-allow-once agent)
+          (agent-shell-cockpit-agent-shell-allow-once agent)
           (should allowed)
           (should (eq (current-buffer) origin)))
       (when (buffer-live-p agent) (kill-buffer agent)))))
@@ -522,7 +554,7 @@
 (ert-deftest agent-shell-cockpit-refuses-allow-without-pending-permission ()
   (let ((agent (generate-new-buffer " *cockpit no permission agent*")))
     (unwind-protect
-        (should-error (agent-shell-cockpit-session-allow-once agent)
+        (should-error (agent-shell-cockpit-agent-shell-allow-once agent)
                       :type 'user-error)
       (when (buffer-live-p agent) (kill-buffer agent)))))
 
@@ -551,9 +583,9 @@
                            ("C-c C-c" . reject)
                            ("v" . view-diff)))
             (should
-             (agent-shell-cockpit-session-permission-action-available-p
+             (agent-shell-cockpit-agent-shell-permission-action-available-p
               agent (car entry)))
-            (agent-shell-cockpit-session-permission-action agent (car entry)))
+            (agent-shell-cockpit-agent-shell-permission-action agent (car entry)))
           (should (equal (sort invoked
                                (lambda (left right)
                                  (string-lessp (symbol-name left)

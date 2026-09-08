@@ -39,7 +39,7 @@
                                         :array-type 'list))
                (session (car (map-elt json 'sessions))))
           (should (equal (mapcar #'car json)
-                         '(schemaVersion sessions name)))
+                         '(schemaVersion sessions id name displayTitle worktreeDirectory worktrees)))
           (should (equal (mapcar #'car session)
                          '(agentId sessionId title))))))))
 
@@ -106,7 +106,7 @@
       (with-temp-buffer
         (insert-file-contents path)
         (goto-char (point-min))
-        (search-forward "\"schemaVersion\":2")
+        (search-forward (format "\"schemaVersion\":%d" agent-shell-cockpit-store-schema-version))
         (replace-match "\"schemaVersion\":99" t t)
         (write-region nil nil path nil 'silent))
       (should-error (agent-shell-cockpit-store-read

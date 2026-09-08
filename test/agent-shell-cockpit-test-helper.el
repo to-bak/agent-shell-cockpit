@@ -5,6 +5,7 @@
 
 ;; Keep most tests independent of agent-shell's full dependency graph.
 (defvar agent-shell--state nil)
+(defvar agent-shell-session-restore-verbosity 'minimal)
 (defvar agent-shell-cockpit-test--buffers nil)
 (defvar agent-shell-agent-configs nil)
 (defun agent-shell-buffers () agent-shell-cockpit-test--buffers)

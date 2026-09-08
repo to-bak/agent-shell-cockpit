@@ -1,6 +1,8 @@
 ;;; agent-shell-cockpit-session.el --- Agent sessions for cockpit -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 to-bak
+;; Author: to-bak
+;; Assisted-by: Codex:GPT-6
 
 ;; SPDX-License-Identifier: MIT
 
@@ -11,7 +13,8 @@
 
 ;;; Code:
 
-(require 'agent-shell)
+(require 'agent-shell-cockpit-agent-shell)
+(require 'cl-lib)
 (require 'map)
 (require 'seq)
 (require 'subr-x)
@@ -31,6 +34,7 @@
                   "agent-shell-cockpit-agent")
 (defvar agent-shell--state)
 (defvar agent-shell-context-sources)
+(defvar agent-shell-cwd-function)
 (defvar agent-shell-cockpit--buffer)
 
 (defvar-local agent-shell-cockpit-session-workspace-root nil
@@ -76,74 +80,21 @@
     (switch-to-buffer agent-shell-cockpit--buffer))
    (t (agent-shell-cockpit))))
 
-(defun agent-shell-cockpit-session--permission-position (buffer)
-  "Return the latest native permission-button position in BUFFER."
-  (unless (buffer-live-p buffer)
-    (user-error "Agent buffer is no longer live"))
-  (with-current-buffer buffer
-    (save-excursion
-      (let ((position (point-min))
-            permission-position)
-        (while (< position (point-max))
-          (when (get-text-property
-                 position 'agent-shell-permission-button)
-            (setq permission-position position))
-          (setq position
-                (or (next-single-property-change
-                     position 'agent-shell-permission-button
-                     nil (point-max))
-                    (point-max))))
-        permission-position))))
-
-(defun agent-shell-cockpit-session-permission-action-available-p (buffer key)
-  "Return non-nil when BUFFER's latest permission row handles KEY."
-  (when-let* ((position
-               (agent-shell-cockpit-session--permission-position buffer)))
-    (with-current-buffer buffer
-      (save-excursion
-        (goto-char position)
-        (commandp (key-binding (kbd key) t))))))
-
-(defun agent-shell-cockpit-session-permission-action (buffer key)
-  "Invoke KEY from BUFFER's latest native agent-shell permission row."
-  (unless (buffer-live-p buffer)
-    (user-error "Agent buffer is no longer live"))
-  (with-current-buffer buffer
-    (save-excursion
-      (let ((position
-             (agent-shell-cockpit-session--permission-position buffer)))
-        (unless position
-          (user-error "Agent has no pending permission request"))
-        (goto-char position)
-        (let ((command (key-binding (kbd key) t)))
-          (unless (commandp command)
-            (user-error "Permission action is unavailable: %s" key))
-          (call-interactively command))))))
-
-(defun agent-shell-cockpit-session-allow-once (buffer)
-  "Allow the latest pending permission request in agent BUFFER once."
-  (agent-shell-cockpit-session-permission-action buffer "y"))
-
-(defun agent-shell-cockpit-session--state-value (path)
-  "Return agent-shell's private state value at PATH.
-All compatibility-sensitive state access is isolated in this function."
-  (when (boundp 'agent-shell--state)
-    (map-nested-elt agent-shell--state path)))
 
 (defun agent-shell-cockpit-session--identifier ()
   "Return the current agent buffer's agent identifier as a string."
   (when-let* ((identifier
-              (agent-shell-cockpit-session--state-value
-               '(:agent-config :identifier))))
+               (agent-shell-cockpit-agent-shell-state-value
+                '(:agent-config :identifier))))
     (symbol-name identifier)))
 
 (defun agent-shell-cockpit-session--session-id ()
   "Return the current agent buffer's ACP session ID."
-  (agent-shell-cockpit-session--state-value '(:session :id)))
+  (agent-shell-cockpit-agent-shell-state-value '(:session :id)))
 
 (defun agent-shell-cockpit-session--title ()
   "Return the current agent buffer's session title."
-  (or (agent-shell-cockpit-session--state-value '(:session :title))
+  (or (agent-shell-cockpit-agent-shell-state-value '(:session :title))
       (buffer-name)))
 
 (defun agent-shell-cockpit-session-workspace (buffer)
@@ -199,47 +150,49 @@ All compatibility-sensitive state access is isolated in this function."
          (map-elt workspace 'sessions))))))
 
 (defun agent-shell-cockpit-session-forget (workspace session)
-  "Forget SESSION from WORKSPACE and persist the updated workspace."
-  (let ((agent-id (map-elt session 'agentId))
-        (session-id (map-elt session 'sessionId)))
-    (agent-shell-cockpit-store-set
-     workspace 'sessions
-     (seq-remove
-      (lambda (candidate)
-        (and (equal (map-elt candidate 'agentId) agent-id)
-             (equal (map-elt candidate 'sessionId) session-id)))
-      (map-elt workspace 'sessions)))
-    (agent-shell-cockpit-store-write workspace)))
+  "Forget SESSION from fresh WORKSPACE metadata."
+  (agent-shell-cockpit-store-update
+   (map-elt workspace 'root)
+   (lambda (fresh)
+     (agent-shell-cockpit-store-set
+      fresh 'sessions
+      (seq-remove (lambda (candidate)
+                    (and (equal (map-elt candidate 'agentId) (map-elt session 'agentId))
+                         (equal (map-elt candidate 'sessionId) (map-elt session 'sessionId))))
+                  (map-elt fresh 'sessions))))))
+
+(defvar agent-shell-cockpit-session-change-hook nil
+  "Hook run when a native agent reports a state change.")
 
 (defun agent-shell-cockpit-session--upsert-current ()
-  "Persist the current agent buffer's session in its workspace."
-  (when-let* ((workspace-root agent-shell-cockpit-session-workspace-root)
-              (workspace (condition-case nil
-                             (agent-shell-cockpit-store-read workspace-root)
-                           (error nil)))
+  "Persist the current buffer's session using a fresh metadata transaction."
+  (when-let* ((root agent-shell-cockpit-session-workspace-root)
+              ((file-exists-p (agent-shell-cockpit-store-metadata-path root)))
               (agent-id (agent-shell-cockpit-session--identifier))
               (session-id (agent-shell-cockpit-session--session-id)))
-    (let* ((sessions (map-elt workspace 'sessions))
-           (existing
-            (seq-find
-             (lambda (session)
-               (and (equal (map-elt session 'agentId) agent-id)
-                    (equal (map-elt session 'sessionId) session-id)))
-             sessions)))
-      (if existing
-          (agent-shell-cockpit-store-set
-           existing 'title (agent-shell-cockpit-session--title))
-        (agent-shell-cockpit-store-set
-         workspace 'sessions
-         (append
-          sessions
-          (list (list (cons 'agentId agent-id)
-                      (cons 'sessionId session-id)
-                      (cons 'title (agent-shell-cockpit-session--title)))))))
-      (agent-shell-cockpit-store-write workspace))))
+    (let ((title (agent-shell-cockpit-session--title))
+          (cwd (file-relative-name default-directory root)))
+      (agent-shell-cockpit-store-update
+       root
+       (lambda (workspace)
+         (let* ((sessions (map-elt workspace 'sessions))
+                (existing (seq-find
+                           (lambda (item)
+                             (and (equal (map-elt item 'agentId) agent-id)
+                                  (equal (map-elt item 'sessionId) session-id)))
+                           sessions)))
+           (unless existing
+             (setq existing `((agentId . ,agent-id) (sessionId . ,session-id)
+                              (displayId . ,(substring (secure-hash 'sha256
+                                                                    (concat agent-id session-id)) 0 6))))
+             (agent-shell-cockpit-store-set workspace 'sessions
+                                            (append sessions (list existing))))
+           (agent-shell-cockpit-store-set existing 'title title)
+           (agent-shell-cockpit-store-set existing 'cwd cwd)))))))
 
 (defun agent-shell-cockpit-session--on-event (event)
   "Handle an agent-shell EVENT for an attached buffer."
+  (run-hooks 'agent-shell-cockpit-session-change-hook)
   (pcase (map-elt event :event)
     ((or 'init-session 'session-restored 'session-title-changed 'turn-complete)
      (agent-shell-cockpit-session--upsert-current))
@@ -248,11 +201,20 @@ All compatibility-sensitive state access is isolated in this function."
 
 (defun agent-shell-cockpit-session--subscribe ()
   "Subscribe the current agent buffer to cockpit persistence events."
+  (setq-local agent-shell-cwd-function (let ((directory default-directory)) (lambda () directory)))
   (unless agent-shell-cockpit-session--subscription
     (setq agent-shell-cockpit-session--subscription
           (agent-shell-subscribe-to
            :shell-buffer (current-buffer)
-           :on-event #'agent-shell-cockpit-session--on-event))))
+           :on-event #'agent-shell-cockpit-session--on-event)))
+  (add-hook 'kill-buffer-hook #'agent-shell-cockpit-session--unsubscribe nil t)
+  (add-hook 'change-major-mode-hook #'agent-shell-cockpit-session--unsubscribe nil t))
+
+(defun agent-shell-cockpit-session--unsubscribe ()
+  "Release the current buffer's native event subscription."
+  (when agent-shell-cockpit-session--subscription
+    (agent-shell-unsubscribe :subscription agent-shell-cockpit-session--subscription)
+    (setq agent-shell-cockpit-session--subscription nil)))
 
 (defun agent-shell-cockpit-session-attach (buffer workspace)
   "Attach compatible agent BUFFER to WORKSPACE and return BUFFER."
@@ -280,12 +242,14 @@ All compatibility-sensitive state access is isolated in this function."
 (defun agent-shell-cockpit-session-start (workspace command &optional initial-input)
   "Start COMMAND at WORKSPACE root with optional INITIAL-INPUT.
 Attach the resulting agent buffer to WORKSPACE."
+  (agent-shell-cockpit-session-target (map-elt workspace 'root) workspace)
   (unless (commandp command)
     (user-error "Agent command is not interactive: %S" command))
   (let ((origin (current-buffer))
         (before (agent-shell-buffers))
         (default-directory (map-elt workspace 'root)))
-    (let ((agent-shell-context-sources
+    (let ((agent-shell-cwd-function (let ((directory default-directory)) (lambda () directory)))
+          (agent-shell-context-sources
            (and initial-input (list (lambda () initial-input)))))
       (let* ((result (call-interactively command))
              (buffer (agent-shell-cockpit-session--new-buffer before result)))
@@ -301,30 +265,120 @@ Attach the resulting agent buffer to WORKSPACE."
   (agent-shell-cockpit-session-start
    workspace #'agent-shell-new-shell initial-input))
 
-(defun agent-shell-cockpit-session--config (identifier)
-  "Return agent configuration identified by IDENTIFIER."
-  (seq-find
-   (lambda (config)
-     (equal (symbol-name (map-elt config :identifier)) identifier))
-   (agent-shell--resolved-agent-configs)))
+
+(defcustom agent-shell-cockpit-session-restore-verbosity nil
+  "History displayed on resume, or nil to use agent-shell's setting.
+The value `ask' prompts on every resume.  A prefix argument when opening
+a history row also prompts, regardless of this setting.  This controls
+displayed history, not the agent's remembered conversation."
+  :type '(choice (const :tag "Use agent-shell setting" nil)
+                 (const ask) (const minimal) (const last)
+                 (const first-last) (const full))
+  :group 'agent-shell-cockpit)
+
+(defvar agent-shell-session-restore-verbosity)
 
 (defun agent-shell-cockpit-session-resume (workspace session)
   "Resume SESSION inside WORKSPACE and return the new live buffer."
+  (agent-shell-cockpit-session-target (map-elt workspace 'root) workspace)
   (when (equal (map-elt workspace 'state) "archived")
     (user-error "Archived workspaces cannot resume sessions"))
   (let ((origin (current-buffer))
-        (config (agent-shell-cockpit-session--config
+        (config (agent-shell-cockpit-agent-shell-config
                  (map-elt session 'agentId)))
-        (default-directory (map-elt workspace 'root)))
+        (default-directory
+         (expand-file-name (or (map-elt session 'cwd) ".") (map-elt workspace 'root))))
+    (unless (and (file-directory-p default-directory)
+                 (file-in-directory-p default-directory (map-elt workspace 'root)))
+      (user-error "Session working directory is missing or outside its workspace"))
     (unless config
       (user-error "Agent configuration is unavailable: %s"
                   (map-elt session 'agentId)))
-    (let ((buffer (agent-shell-start
-                   :config config :session-id (map-elt session 'sessionId))))
+    (let* ((verbosity
+            (if (or current-prefix-arg
+                    (eq agent-shell-cockpit-session-restore-verbosity 'ask))
+                (intern (completing-read
+                         "Display restored history: "
+                         '("minimal" "last" "first-last" "full") nil t nil nil
+                         (symbol-name agent-shell-session-restore-verbosity)))
+              (or agent-shell-cockpit-session-restore-verbosity
+                  agent-shell-session-restore-verbosity)))
+           (agent-shell-session-restore-verbosity verbosity)
+           (agent-shell-cwd-function (let ((directory default-directory)) (lambda () directory)))
+           (buffer (agent-shell-start
+                    :config config :session-id (map-elt session 'sessionId))))
       (agent-shell-cockpit-session-attach buffer workspace)
       (with-current-buffer buffer
+        ;; Replay continues asynchronously after `agent-shell-start' returns.
+        (setq-local agent-shell-session-restore-verbosity verbosity)
         (setq agent-shell-cockpit-session-return-buffer origin))
       buffer)))
+
+(defcustom agent-shell-cockpit-enable-standalone-sessions nil
+  "Whether the dashboard offers standalone agent launches."
+  :type 'boolean :group 'agent-shell-cockpit)
+
+(defvar-local agent-shell-cockpit-session-standalone-p nil
+  "Non-nil for a Cockpit-launched standalone agent.")
+
+(defun agent-shell-cockpit-session-target (directory &optional workspace)
+  "Validate DIRECTORY and return its launch target with optional WORKSPACE."
+  (when (file-remote-p directory) (user-error "Remote targets are not supported"))
+  (unless (file-directory-p directory) (user-error "Directory does not exist"))
+  (when workspace
+    (setq workspace (agent-shell-cockpit-store-read (map-elt workspace 'root)))
+    (unless (and (equal (map-elt workspace 'state) "active")
+                 (not (map-elt workspace 'operation)))
+      (user-error "Restore or recover the workspace before starting agents")))
+  `((directory . ,(file-name-as-directory (file-truename directory)))
+    (workspace . ,workspace)))
+
+(defun agent-shell-cockpit-session-start-target (target &optional input)
+  "Start a native agent for TARGET with optional editable INPUT."
+  (if-let* ((workspace (map-elt target 'workspace)))
+      (agent-shell-cockpit-session-start-select workspace input)
+    (let* ((origin (current-buffer))
+           (default-directory (map-elt target 'directory))
+           (agent-shell-cwd-function (let ((directory default-directory)) (lambda () directory)))
+           (agent-shell-context-sources (and input (list (lambda () input))))
+           (before (agent-shell-buffers))
+           (buffer (agent-shell-cockpit-session--new-buffer
+                    before (call-interactively #'agent-shell-new-shell))))
+      (unless (buffer-live-p buffer) (user-error "Agent did not create a buffer"))
+      (with-current-buffer buffer
+        (setq agent-shell-cockpit-session-standalone-p t
+              agent-shell-cockpit-session-return-buffer origin)
+        (agent-shell-cockpit-session-mode 1)
+        (agent-shell-cockpit-session--subscribe))
+      buffer)))
+
+(defun agent-shell-cockpit-session-buffers-in-directory (directory)
+  "Return all native agents working inside DIRECTORY, regardless of membership."
+  (seq-filter
+   (lambda (buffer)
+     (and (buffer-live-p buffer)
+          (file-in-directory-p (buffer-local-value 'default-directory buffer)
+                               directory)))
+   (agent-shell-buffers)))
+
+(defun agent-shell-cockpit-session-invoke (buffer command)
+  "Run native COMMAND in BUFFER, adopting replacement and child buffers."
+  (unless (buffer-live-p buffer) (user-error "Agent buffer is no longer live"))
+  (let ((before (agent-shell-buffers))
+        (workspace (agent-shell-cockpit-session-workspace buffer))
+        (origin (buffer-local-value 'agent-shell-cockpit-session-return-buffer buffer))
+        (standalone (buffer-local-value 'agent-shell-cockpit-session-standalone-p buffer)))
+    (unwind-protect
+        (with-current-buffer buffer (call-interactively command))
+      (dolist (new (seq-difference (agent-shell-buffers) before))
+        (if workspace
+            (agent-shell-cockpit-session-attach new workspace)
+          (with-current-buffer new
+            (setq agent-shell-cockpit-session-standalone-p standalone)
+            (agent-shell-cockpit-session-mode 1)
+            (agent-shell-cockpit-session--subscribe)))
+        (with-current-buffer new
+          (setq agent-shell-cockpit-session-return-buffer origin))))))
 
 (provide 'agent-shell-cockpit-session)
 

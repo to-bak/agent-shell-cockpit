@@ -1,6 +1,8 @@
 ;;; agent-shell-cockpit-workspace.el --- Workspace lifecycle -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 to-bak
+;; Author: to-bak
+;; Assisted-by: Codex:GPT-6
 
 ;; SPDX-License-Identifier: MIT
 
@@ -10,6 +12,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'map)
 (require 'org-id)
 (require 'seq)
@@ -30,9 +33,10 @@
 
 (cl-defun agent-shell-cockpit-workspace-create (&key name)
   "Create and return a workspace named NAME.
-Workspace titles are derived from user context files when present, and
-otherwise from NAME."
+The explicit display title initially defaults to NAME."
   (agent-shell-cockpit-workspace--validate-name name)
+  (agent-shell-cockpit-workspace--validate-name
+   agent-shell-cockpit-worktrees-directory-name)
   (let* ((parent (file-name-as-directory
                   (expand-file-name agent-shell-cockpit-workspace-directory)))
          (target (expand-file-name name parent))
@@ -43,14 +47,18 @@ otherwise from NAME."
     (setq temporary (make-temp-file
                      (expand-file-name ".cockpit-create-" parent) t))
     (unwind-protect
-         (let ((record
+        (let ((record
                (list
                 (cons 'schemaVersion agent-shell-cockpit-store-schema-version)
                 (cons 'sessions nil)
+                (cons 'id (org-id-uuid))
+                (cons 'name name)
+                (cons 'displayTitle name)
+                (cons 'worktreeDirectory agent-shell-cockpit-worktrees-directory-name)
                 (cons 'root (file-name-as-directory temporary))
                 (cons 'kind 'workspace))))
           (make-directory
-           (expand-file-name agent-shell-cockpit-repositories-directory-name
+           (expand-file-name agent-shell-cockpit-worktrees-directory-name
                              temporary))
           (make-directory
            (expand-file-name agent-shell-cockpit-context-directory-name
@@ -133,81 +141,48 @@ Session metadata remains available only in the timestamped backup."
          (record
           (list (cons 'schemaVersion agent-shell-cockpit-store-schema-version)
                 (cons 'sessions nil)
+                (cons 'id (org-id-uuid))
+                (cons 'displayTitle (file-name-nondirectory (directory-file-name root)))
+                (cons 'worktreeDirectory agent-shell-cockpit-worktrees-directory-name)
                 (cons 'root root)
                 (cons 'kind 'workspace))))
     (when (file-exists-p path)
       (copy-file path (format "%s.backup-%s" path
                               (format-time-string "%Y%m%dT%H%M%S")) t))
     (make-directory (agent-shell-cockpit-workspace-context-path record) t)
-    (agent-shell-cockpit-store-write record)
+    (agent-shell-cockpit-store-write record t)
     (agent-shell-cockpit-store-read root)))
 
-(defun agent-shell-cockpit-workspace-active-repositories (workspace)
-  "Return repository records derived from WORKSPACE's worktree directory."
-  (let ((directory
-         (expand-file-name agent-shell-cockpit-repositories-directory-name
-                           (map-elt workspace 'root))))
+(defun agent-shell-cockpit-workspace-worktrees-path (workspace)
+  "Return WORKSPACE's recorded worktree directory."
+  (let* ((root (map-elt workspace 'root))
+         (name (map-elt workspace 'worktreeDirectory)))
+    (agent-shell-cockpit-workspace--validate-name name)
+    (expand-file-name name root)))
+
+(defun agent-shell-cockpit-workspace-active-worktrees (workspace)
+  "Return recorded and discovered worktrees belonging to WORKSPACE."
+  (let* ((directory (agent-shell-cockpit-workspace-worktrees-path workspace))
+         (records (copy-tree (map-elt workspace 'worktrees))))
     (when (file-directory-p directory)
-      (mapcar
-       (lambda (path)
-         `((name . ,(file-name-nondirectory (directory-file-name path)))))
-       (seq-filter #'file-directory-p
-                   (directory-files directory t
-                                    directory-files-no-dot-files-regexp t))))))
+      (dolist (path (directory-files directory t directory-files-no-dot-files-regexp t))
+        (let ((name (file-name-nondirectory path)))
+          (when (and (file-directory-p path)
+                     (not (seq-find (lambda (item) (equal (map-elt item 'name) name)) records)))
+            (push `((name . ,name)) records)))))
+    (sort records (lambda (left right)
+                    (string-lessp (map-elt left 'name) (map-elt right 'name))))))
 
 (defun agent-shell-cockpit-workspace-repository-path (workspace repository)
   "Return absolute path for REPOSITORY within WORKSPACE."
+  (agent-shell-cockpit-workspace--validate-name (map-elt repository 'name))
   (expand-file-name
    (map-elt repository 'name)
-   (expand-file-name agent-shell-cockpit-repositories-directory-name
-                     (map-elt workspace 'root))))
+   (agent-shell-cockpit-workspace-worktrees-path workspace)))
 
-(defun agent-shell-cockpit-workspace--archive-preflight (workspace)
-  "Signal when WORKSPACE cannot be archived safely."
-  (unless (equal (map-elt workspace 'state) "active")
-    (user-error "Workspace is not active"))
-  (when (and (fboundp 'agent-shell-cockpit-session-live-buffers)
-             (agent-shell-cockpit-session-live-buffers workspace))
-    (user-error "Stop the workspace's live agent sessions before archiving"))
-  (dolist (repository
-           (agent-shell-cockpit-workspace-active-repositories workspace))
-    (let ((path (agent-shell-cockpit-workspace-repository-path
-                 workspace repository)))
-      (unless (file-directory-p path)
-        (user-error "Worktree is missing: %s" path))
-      (unless (agent-shell-cockpit-git-clean-p path)
-        (user-error "Worktree has tracked or untracked changes: %s" path)))))
-
-(defun agent-shell-cockpit-workspace--archive-destination (workspace)
-  "Return a unique UUID-qualified archive path for WORKSPACE."
-  (let ((archive-root (agent-shell-cockpit-store-archive-directory))
-        destination)
-    (while (or (null destination) (file-exists-p destination))
-      (setq destination
-            (expand-file-name
-             (format "%s--%s" (map-elt workspace 'name) (org-id-uuid))
-             archive-root)))
-    destination))
-
-(defun agent-shell-cockpit-workspace-archive (workspace)
-  "Safely archive WORKSPACE and return its updated record."
-  (require 'agent-shell-cockpit-git)
-  (agent-shell-cockpit-workspace--archive-preflight workspace)
-  (let* ((old-root (map-elt workspace 'root))
-         (archive-root (agent-shell-cockpit-store-archive-directory))
-         (destination
-          (agent-shell-cockpit-workspace--archive-destination workspace)))
-    ;; Persist the logical name before the physical directory gains a UUID.
-    (agent-shell-cockpit-store-set
-     workspace 'archivedAt (floor (float-time)))
-    (agent-shell-cockpit-store-write workspace)
-    (dolist (repository
-             (copy-sequence
-              (agent-shell-cockpit-workspace-active-repositories workspace)))
-      (agent-shell-cockpit-git-remove-worktree workspace repository))
-    (make-directory archive-root t)
-    (rename-file old-root destination)
-    (agent-shell-cockpit-store-read destination)))
+(autoload 'agent-shell-cockpit-workspace--archive-preflight "agent-shell-cockpit-lifecycle")
+(autoload 'agent-shell-cockpit-workspace-archive "agent-shell-cockpit-lifecycle")
+(autoload 'agent-shell-cockpit-workspace-restore "agent-shell-cockpit-lifecycle")
 
 (defun agent-shell-cockpit-workspace-delete-archive (workspace)
   "Permanently delete archived WORKSPACE and all of its files.

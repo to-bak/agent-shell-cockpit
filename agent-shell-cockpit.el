@@ -3,7 +3,8 @@
 ;; Copyright (C) 2026 to-bak
 
 ;; Author: to-bak
-;; Version: 0.1.0
+;; Assisted-by: Codex:GPT-6
+;; Version: 0.2.0
 ;; Package-Requires: ((emacs "29.1") (agent-shell "0.75.1")
 ;;                    (magit-section "4.0.0") (transient "0.7.0"))
 ;; Keywords: convenience, tools
@@ -25,8 +26,8 @@
 (require 'agent-shell-cockpit-store)
 (require 'agent-shell-cockpit-workspace)
 (require 'agent-shell-cockpit-git)
-(require 'agent-shell-cockpit-skills)
 (require 'agent-shell-cockpit-session)
+(require 'agent-shell-cockpit-instructions)
 (require 'agent-shell-cockpit-ui)
 (require 'agent-shell-cockpit-agent)
 (require 'agent-shell-cockpit-dashboard)
@@ -42,60 +43,91 @@
   (evil-set-initial-state 'agent-shell-cockpit-workspace-view-mode 'motion)
   (evil-set-initial-state 'agent-shell-cockpit-archive-view-mode 'motion)
   (evil-define-key* 'motion agent-shell-cockpit-mode-map
-    (kbd "TAB") #'agent-shell-cockpit-toggle-section
-    (kbd "RET") #'agent-shell-cockpit-open
-    "?" #'agent-shell-cockpit-dispatch
-    "j" #'agent-shell-cockpit-next
-    "k" #'agent-shell-cockpit-previous
-    "n" #'agent-shell-cockpit-next
-    "p" #'agent-shell-cockpit-previous
-    "r" #'agent-shell-cockpit-refresh
-    "w" #'agent-shell-cockpit-create-workspace
-    "e" #'agent-shell-cockpit-edit-context
-    "s" #'agent-shell-cockpit-start-agent
-    "+" #'agent-shell-cockpit-attach-session
-    "a" #'agent-shell-cockpit-agent-actions
-    "A" #'agent-shell-cockpit-archive-workspace
-    "K" #'agent-shell-cockpit-agent-kill
-    "l" #'agent-shell-cockpit-archive-dispatch
-    "q" #'agent-shell-cockpit-quit)
+                    (kbd "TAB") #'agent-shell-cockpit-toggle-section
+                    (kbd "RET") #'agent-shell-cockpit-open
+                    "?" #'agent-shell-cockpit-dispatch
+                    "j" #'agent-shell-cockpit-next
+                    "k" #'agent-shell-cockpit-previous
+                    "n" #'agent-shell-cockpit-next
+                    "p" #'agent-shell-cockpit-previous
+                    "r" #'agent-shell-cockpit-refresh
+                    "v" #'agent-shell-cockpit-agent-preview
+                    "w" #'agent-shell-cockpit-create-workspace
+                    "e" #'agent-shell-cockpit-edit-context
+                    "s" #'agent-shell-cockpit-start-agent
+                    "S" #'agent-shell-cockpit-start-standalone
+                    "]" #'agent-shell-cockpit-next-attention
+                    "+" #'agent-shell-cockpit-attach-session
+                    "a" #'agent-shell-cockpit-agent-actions
+                    "A" #'agent-shell-cockpit-archive-workspace
+                    "K" #'agent-shell-cockpit-agent-kill
+                    "l" #'agent-shell-cockpit-archive-dispatch
+                    "q" #'agent-shell-cockpit-quit)
   (evil-define-key* 'motion agent-shell-cockpit-workspace-view-mode-map
-    (kbd "TAB") #'agent-shell-cockpit-toggle-section
-    (kbd "RET") #'agent-shell-cockpit-open
-    "?" #'agent-shell-cockpit-dispatch
-    "j" #'agent-shell-cockpit-next
-    "k" #'agent-shell-cockpit-previous
-    "n" #'agent-shell-cockpit-next
-    "p" #'agent-shell-cockpit-previous
-    "r" #'agent-shell-cockpit-refresh
-    "s" #'agent-shell-cockpit-workspace-view-start-agent
-    "a" #'agent-shell-cockpit-agent-actions
-    "x" #'agent-shell-cockpit-workspace-view-forget-session
-    "K" #'agent-shell-cockpit-agent-kill
-    "e" #'agent-shell-cockpit-workspace-view-edit-context
-    "+" #'agent-shell-cockpit-add-worktree
-    "-" #'agent-shell-cockpit-remove-worktree
-    "A" #'agent-shell-cockpit-workspace-view-archive
-    "b" #'agent-shell-cockpit-workspace-view-back
-    "q" #'agent-shell-cockpit-quit)
+                    (kbd "TAB") #'agent-shell-cockpit-toggle-section
+                    (kbd "RET") #'agent-shell-cockpit-open
+                    "?" #'agent-shell-cockpit-dispatch
+                    "j" #'agent-shell-cockpit-next
+                    "k" #'agent-shell-cockpit-previous
+                    "n" #'agent-shell-cockpit-next
+                    "p" #'agent-shell-cockpit-previous
+                    "r" #'agent-shell-cockpit-refresh
+                    "s" #'agent-shell-cockpit-workspace-view-start-agent
+                    "R" #'agent-shell-cockpit-workspace-view-recover
+                    "t" #'agent-shell-cockpit-workspace-view-title
+                    "v" #'agent-shell-cockpit-agent-preview
+                    "c" #'agent-shell-cockpit-workspace-view-add-context
+                    "m" #'agent-shell-cockpit-workspace-view-open-worktree
+                    "u" #'agent-shell-cockpit-workspace-view-adopt
+                    "P" #'agent-shell-cockpit-workspace-view-preserve
+                    "]" #'agent-shell-cockpit-next-attention
+                    "a" #'agent-shell-cockpit-agent-actions
+                    "x" #'agent-shell-cockpit-workspace-view-forget-session
+                    "K" #'agent-shell-cockpit-agent-kill
+                    "e" #'agent-shell-cockpit-workspace-view-edit-context
+                    "+" #'agent-shell-cockpit-add-worktree
+                    "-" #'agent-shell-cockpit-remove-worktree
+                    "A" #'agent-shell-cockpit-workspace-view-archive
+                    "b" #'agent-shell-cockpit-workspace-view-back
+                    "q" #'agent-shell-cockpit-quit)
   (evil-define-key* 'motion agent-shell-cockpit-archive-view-mode-map
-    (kbd "TAB") #'agent-shell-cockpit-toggle-section
-    (kbd "RET") #'agent-shell-cockpit-open
-    "?" #'agent-shell-cockpit-dispatch
-    "j" #'agent-shell-cockpit-next
-    "k" #'agent-shell-cockpit-previous
-    "n" #'agent-shell-cockpit-next
-    "p" #'agent-shell-cockpit-previous
-    "r" #'agent-shell-cockpit-refresh
-    "D" #'agent-shell-cockpit-archive-view-delete
-    "b" #'agent-shell-cockpit-archive-view-back
-    "q" #'agent-shell-cockpit-quit)
+                    (kbd "TAB") #'agent-shell-cockpit-toggle-section
+                    (kbd "RET") #'agent-shell-cockpit-open
+                    "?" #'agent-shell-cockpit-dispatch
+                    "j" #'agent-shell-cockpit-next
+                    "k" #'agent-shell-cockpit-previous
+                    "n" #'agent-shell-cockpit-next
+                    "p" #'agent-shell-cockpit-previous
+                    "r" #'agent-shell-cockpit-refresh
+                    "D" #'agent-shell-cockpit-archive-view-delete
+                    "R" #'agent-shell-cockpit-archive-view-restore
+                    "b" #'agent-shell-cockpit-archive-view-back
+                    "q" #'agent-shell-cockpit-quit)
   (evil-define-key* 'normal agent-shell-cockpit-session-mode-map
-    "q" #'agent-shell-cockpit-session-return))
+                    "q" #'agent-shell-cockpit-session-return))
 
-(if (featurep 'evil)
-    (agent-shell-cockpit--evil-setup)
-  (add-hook 'evil-mode-hook #'agent-shell-cockpit--evil-setup))
+(add-hook 'evil-mode-hook #'agent-shell-cockpit--evil-setup)
+(when (featurep 'evil) (agent-shell-cockpit--evil-setup))
+
+;;;###autoload
+(defun agent-shell-cockpit ()
+  "Open the agent-shell cockpit workspace dashboard."
+  (interactive)
+  (let ((origin (current-buffer))
+        (buffer (get-buffer-create agent-shell-cockpit-buffer-name)))
+    (setq agent-shell-cockpit--buffer buffer)
+    (unless (with-current-buffer origin (derived-mode-p 'agent-shell-cockpit-ui-mode))
+      (setq agent-shell-cockpit-dashboard--origin-directory
+            (buffer-local-value 'default-directory origin)))
+    (switch-to-buffer buffer)
+    (unless (derived-mode-p 'agent-shell-cockpit-mode)
+      (agent-shell-cockpit-mode))
+    (unless (or (eq origin buffer)
+                (with-current-buffer origin
+                  (or (derived-mode-p 'agent-shell-cockpit-ui-mode)
+                      (derived-mode-p 'agent-shell-mode))))
+      (setq agent-shell-cockpit-ui-return-buffer origin))
+    (agent-shell-cockpit-dashboard-refresh)))
 
 (provide 'agent-shell-cockpit)
 

@@ -2,6 +2,34 @@
 
 (require 'agent-shell-cockpit-test-helper)
 
+(ert-deftest cockpit-git-status-detects-changes-and-failures-asynchronously ()
+  (agent-shell-cockpit-test-with-root
+    (let ((source (agent-shell-cockpit-test-make-repository
+                   (expand-file-name "source" test-root))))
+      (with-temp-buffer
+        (cl-labels ((status ()
+                     (agent-shell-cockpit-git--stop-status)
+                     (should (eq (agent-shell-cockpit-git-status source) 'pending))
+                     (let ((process (plist-get
+                                     (cdr (assoc source agent-shell-cockpit-git--status-cache))
+                                     :process))
+                           (deadline (+ (float-time) 5)))
+                       (while (and (process-live-p process) (< (float-time) deadline))
+                         (accept-process-output process 0.05))
+                       (should-not (process-live-p process)))
+                     (agent-shell-cockpit-git-status source)))
+          (should (eq (status) 'clean))
+          (with-temp-file (expand-file-name "untracked" source) (insert "new"))
+          (should (eq (status) 'dirty))
+          (agent-shell-cockpit-test-git source "add" "untracked")
+          (should (eq (status) 'dirty))
+          (agent-shell-cockpit-test-git source "commit" "-qm" "new")
+          (should (eq (status) 'clean))
+          (with-temp-file (expand-file-name "untracked" source) (insert "modified"))
+          (should (eq (status) 'dirty))
+          (setq source test-root)
+          (should (eq (status) 'unknown)))))))
+
 (ert-deftest agent-shell-cockpit-git-adds-and-removes-new-branch-worktree ()
   (agent-shell-cockpit-test-with-root
     (let* ((source (agent-shell-cockpit-test-make-repository
