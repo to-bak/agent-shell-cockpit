@@ -587,67 +587,6 @@
                                             (buffer-string))))))
         (when (buffer-live-p agent) (kill-buffer agent))))))
 
-(ert-deftest agent-shell-cockpit-allows-pending-permission-without-visiting-agent ()
-  (let ((agent (generate-new-buffer " *cockpit permission agent*"))
-        (origin (current-buffer))
-        allowed)
-    (unwind-protect
-        (progn
-          (with-current-buffer agent
-            (insert "Allow (y)")
-            (let ((map (make-sparse-keymap)))
-              (define-key map (kbd "y")
-                          (lambda () (interactive) (setq allowed t)))
-              (add-text-properties
-               (- (point) 2) (1- (point))
-               (list 'agent-shell-permission-button t 'keymap map))))
-          (agent-shell-cockpit-agent-shell-allow-once agent)
-          (should allowed)
-          (should (eq (current-buffer) origin)))
-      (when (buffer-live-p agent) (kill-buffer agent)))))
-
-(ert-deftest agent-shell-cockpit-refuses-allow-without-pending-permission ()
-  (let ((agent (generate-new-buffer " *cockpit no permission agent*")))
-    (unwind-protect
-        (should-error (agent-shell-cockpit-agent-shell-allow-once agent)
-                      :type 'user-error)
-      (when (buffer-live-p agent) (kill-buffer agent)))))
-
-(ert-deftest agent-shell-cockpit-delegates-all-native-permission-actions ()
-  (let ((agent (generate-new-buffer " *cockpit permission actions*"))
-        invoked)
-    (unwind-protect
-        (progn
-          (with-current-buffer agent
-            (insert "permission")
-            (let ((map (make-sparse-keymap)))
-              (dolist (entry '(("y" . allow-once)
-                               ("!" . allow-always)
-                               ("C-c C-c" . reject)
-                               ("v" . view-diff)))
-                (let ((action (cdr entry)))
-                  (define-key map (kbd (car entry))
-                              (lambda ()
-                                (interactive)
-                                (push action invoked)))))
-              (add-text-properties
-               (1- (point)) (point)
-               (list 'agent-shell-permission-button t 'keymap map))))
-          (dolist (entry '(("y" . allow-once)
-                           ("!" . allow-always)
-                           ("C-c C-c" . reject)
-                           ("v" . view-diff)))
-            (should
-             (agent-shell-cockpit-agent-shell-permission-action-available-p
-              agent (car entry)))
-            (agent-shell-cockpit-agent-shell-permission-action agent (car entry)))
-          (should (equal (sort invoked
-                               (lambda (left right)
-                                 (string-lessp (symbol-name left)
-                                               (symbol-name right))))
-                         '(allow-always allow-once reject view-diff))))
-      (when (buffer-live-p agent) (kill-buffer agent)))))
-
 (ert-deftest agent-shell-cockpit-context-expands-file-inline ()
   (agent-shell-cockpit-test-with-root
     (let* ((workspace (agent-shell-cockpit-workspace-create

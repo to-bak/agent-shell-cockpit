@@ -5,7 +5,7 @@
 ;; Author: to-bak
 ;; Assisted-by: Codex:GPT-6
 ;; Version: 0.2.0
-;; Package-Requires: ((emacs "29.1") (agent-shell "0.75.1")
+;; Package-Requires: ((emacs "29.1") (agent-shell "0.75.2")
 ;;                    (magit-section "4.0.0") (transient "0.7.0"))
 ;; Keywords: convenience, tools
 ;; URL: https://github.com/to-bak/agent-shell-cockpit
@@ -56,8 +56,7 @@
                     "w" #'agent-shell-cockpit-create-workspace
                     "e" #'agent-shell-cockpit-edit-context
                     "s" #'agent-shell-cockpit-start-agent
-                    "S" #'agent-shell-cockpit-start-agent-defaults
-                    "N" #'agent-shell-cockpit-start-standalone
+                    "S" #'agent-shell-cockpit-start-agent
                     "]" #'agent-shell-cockpit-next-attention
                     "+" #'agent-shell-cockpit-attach-session
                     "a" #'agent-shell-cockpit-agent-actions
@@ -76,13 +75,11 @@
                     "p" #'agent-shell-cockpit-previous
                     "r" #'agent-shell-cockpit-refresh
                     "s" #'agent-shell-cockpit-workspace-view-start-agent
-                    "S" #'agent-shell-cockpit-workspace-view-start-agent-defaults
+                    "S" #'agent-shell-cockpit-workspace-view-start-agent
                     "R" #'agent-shell-cockpit-workspace-view-recover
                     "t" #'agent-shell-cockpit-workspace-view-title
                     "v" #'agent-shell-cockpit-agent-preview
                     "c" #'agent-shell-cockpit-workspace-view-add-context
-                    "m" #'agent-shell-cockpit-workspace-view-open-worktree
-                    "u" #'agent-shell-cockpit-workspace-view-adopt
                     "P" #'agent-shell-cockpit-workspace-view-preserve
                     "]" #'agent-shell-cockpit-next-attention
                     "a" #'agent-shell-cockpit-agent-actions

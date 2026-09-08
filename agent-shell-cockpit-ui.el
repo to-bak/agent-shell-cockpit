@@ -15,7 +15,6 @@
 (require 'map)
 (require 'seq)
 
-(declare-function agent-shell-cockpit-git-cancel-jobs "agent-shell-cockpit-git")
 (defvar agent-shell-cockpit-ui--event-timer nil)
 (require 'magit-section)
 (require 'subr-x)
@@ -42,19 +41,10 @@
   :type 'integer
   :group 'agent-shell-cockpit)
 
-(defface agent-shell-cockpit-title
-  '((t :inherit magit-section-heading))
-  "Face for Cockpit buffer titles."
-  :group 'agent-shell-cockpit)
-
 (defface agent-shell-cockpit-brand
   '((t :inherit magit-section-heading :weight bold
        :box (:line-width (1 . -1))))
   "Face for the Cockpit badge in buffer header lines."
-  :group 'agent-shell-cockpit)
-
-(defface agent-shell-cockpit-heading '((t :inherit magit-section-heading))
-  "Face for cockpit headings."
   :group 'agent-shell-cockpit)
 
 (defface agent-shell-cockpit-secondary '((t :inherit shadow))
@@ -101,13 +91,13 @@
   :group 'agent-shell-cockpit)
 
 (defconst agent-shell-cockpit-ui--status-spec
-  '((attention "attention" agent-shell-cockpit-status-attention 0)
-    (working "working" agent-shell-cockpit-status-working 1)
-    (ready "ready" agent-shell-cockpit-status-ready 2)
-    (idle "idle" agent-shell-cockpit-status-muted 3)
-    (history "history" agent-shell-cockpit-status-muted 4)
-    (starting "starting" agent-shell-cockpit-status-muted 5)
-    (invalid "invalid" agent-shell-cockpit-status-attention 6)))
+  '((attention "attention" agent-shell-cockpit-status-attention)
+    (working "working" agent-shell-cockpit-status-working)
+    (ready "ready" agent-shell-cockpit-status-ready)
+    (idle "idle" agent-shell-cockpit-status-muted)
+    (history "history" agent-shell-cockpit-status-muted)
+    (starting "starting" agent-shell-cockpit-status-muted)
+    (invalid "invalid" agent-shell-cockpit-status-attention)))
 
 (defvar-local agent-shell-cockpit-ui--refresh-function nil)
 (defvar-local agent-shell-cockpit-ui--open-function nil)
@@ -152,8 +142,8 @@
    ((derived-mode-p 'agent-shell-cockpit-workspace-view-mode)
     (or agent-shell-cockpit-ui-workspace-heading
         (format "Workspace · %s"
-            (string-remove-prefix
-             "Cockpit: " (string-trim (buffer-name) "\\*+" "\\*+")))))
+                (string-remove-prefix
+                 "Cockpit: " (string-trim (buffer-name) "\\*+" "\\*+")))))
    (t "Dashboard")))
 
 (defun agent-shell-cockpit-ui-insert-header (label value)
@@ -214,12 +204,15 @@ Use Nerd Icons when available, with portable glyphs as a fallback."
     (when (cl-typep section 'agent-shell-cockpit-section)
       (oref section kind))))
 
-(defun agent-shell-cockpit-ui-capture-position (&optional position)
+(defun agent-shell-cockpit-ui-capture-position (&optional position keep-header)
   "Capture POSITION so it can be restored after rendering.
-The offset within a navigable row is retained as well as its identity."
+The offset within a navigable row is retained as well as its identity.
+KEEP-HEADER preserves positions before the first section for window scrolling."
   (let* ((position (min (or position (point)) (point-max)))
          (section (magit-section-at position)))
-    (list :point position
+    (list :header-offset (and keep-header
+                              (or (null section) (eq section magit-root-section))
+                              (- position (point-min)))
           :section-ident (and section (magit-section-ident section))
           :section-offset (and section (- position (oref section start))))))
 
@@ -229,6 +222,8 @@ The offset within a navigable row is retained as well as its identity."
          (section (and ident magit-root-section
                        (magit-get-section ident))))
     (cond
+     ((plist-get state :header-offset)
+      (goto-char (min (point-max) (+ (point-min) (plist-get state :header-offset)))))
      (section
       (goto-char (min (+ (oref section start)
                          (or (plist-get state :section-offset) 0))
@@ -240,25 +235,38 @@ The offset within a navigable row is retained as well as its identity."
 (defun agent-shell-cockpit-ui-refresh-buffer (render-function)
   "Refresh the current buffer using RENDER-FUNCTION.
 Preserve section visibility and the position of point."
-  (let* ((saved (agent-shell-cockpit-ui-capture-position))
-         (windows (mapcar (lambda (window)
-                            (list window
-                                  (agent-shell-cockpit-ui-capture-position (window-point window))
-                                  (agent-shell-cockpit-ui-capture-position (window-start window))
-                                  (window-hscroll window)))
-                          (get-buffer-window-list (current-buffer) nil t)))
-         (inhibit-read-only t))
-    (funcall render-function)
-    (let ((magit-section-cache-visibility nil))
-      (magit-section-show magit-root-section))
-    (dolist (state windows)
-      (when (window-live-p (car state))
-        (agent-shell-cockpit-ui-restore-position (nth 2 state))
-        (set-window-start (car state) (point) t)
-        (agent-shell-cockpit-ui-restore-position (nth 1 state))
-        (set-window-point (car state) (point))
-        (set-window-hscroll (car state) (nth 3 state))))
-    (agent-shell-cockpit-ui-restore-position saved)))
+  (let ((restriction (when (buffer-narrowed-p)
+                       (list (agent-shell-cockpit-ui-capture-position (point-min))
+                             (agent-shell-cockpit-ui-capture-position
+                              (max (point-min) (1- (point-max))))))))
+    (save-restriction
+      (widen)
+      (let* ((saved (agent-shell-cockpit-ui-capture-position))
+             (windows (mapcar (lambda (window)
+                                (list window
+                                      (agent-shell-cockpit-ui-capture-position (window-point window))
+                                      (agent-shell-cockpit-ui-capture-position (window-start window) t)
+                                      (window-hscroll window)))
+                              (get-buffer-window-list (current-buffer) nil t)))
+             (inhibit-read-only t))
+        (funcall render-function)
+        (let ((magit-section-cache-visibility nil))
+          (magit-section-show magit-root-section))
+        (dolist (state windows)
+          (when (window-live-p (car state))
+            (agent-shell-cockpit-ui-restore-position (nth 2 state))
+            (set-window-start (car state) (point) t)
+            (agent-shell-cockpit-ui-restore-position (nth 1 state))
+            (set-window-point (car state) (point))
+            (set-window-hscroll (car state) (nth 3 state))))
+        (agent-shell-cockpit-ui-restore-position saved)))
+    (when restriction
+      (save-excursion
+        (widen)
+        (agent-shell-cockpit-ui-restore-position (car restriction))
+        (let ((start (point)))
+          (agent-shell-cockpit-ui-restore-position (cadr restriction))
+          (narrow-to-region start (max start (min (point-max) (1+ (point))))))))))
 
 (defun agent-shell-cockpit-ui-goto-first-row ()
   "Move point to the first top-level Cockpit section."
@@ -359,6 +367,8 @@ Preserve section visibility and the position of point."
   :parent magit-section-mode-map
   "RET" #'agent-shell-cockpit-open
   "TAB" #'agent-shell-cockpit-toggle-section
+  "M-<" #'agent-shell-cockpit-first
+  "M->" #'agent-shell-cockpit-last
   ;; These come from `magit-section-mode-map', but Cockpit only uses the
   ;; single-section `TAB' toggle and never cycles the whole section tree.
   "<backtab>" #'ignore
@@ -401,7 +411,11 @@ Preserve section visibility and the position of point."
 
 (defun agent-shell-cockpit-ui-schedule-refresh (&rest _)
   "Coalesce session and Git events into a visible-view refresh."
-  (unless (timerp agent-shell-cockpit-ui--event-timer)
+  (when (and (not (timerp agent-shell-cockpit-ui--event-timer))
+             (seq-some (lambda (window)
+                         (with-current-buffer (window-buffer window)
+                           (derived-mode-p 'agent-shell-cockpit-ui-mode)))
+                       (mapcan (lambda (frame) (window-list frame 'nomini)) (frame-list))))
     (setq agent-shell-cockpit-ui--event-timer
           (run-with-idle-timer 0.1 nil #'agent-shell-cockpit-ui--refresh-visible))))
 

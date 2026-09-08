@@ -405,15 +405,9 @@ CONTEXTS is the list of context files to render."
       (agent-shell-cockpit-workspace-view-refresh))))
 
 (defun agent-shell-cockpit-workspace-view-start-agent ()
-  "Start and configure an agent in this workspace."
+  "Select instructions and start a native agent in this workspace."
   (interactive)
-  (agent-shell-cockpit-agent-configure
-   (agent-shell-cockpit-workspace-view-start-agent-defaults)))
-
-(defun agent-shell-cockpit-workspace-view-start-agent-defaults ()
-  "Select instructions and start an agent using configured defaults."
-  (interactive)
-  (agent-shell-cockpit-instructions-launch
+  (agent-shell-cockpit-agent-launch
    (agent-shell-cockpit-workspace-view--workspace)))
 
 (defun agent-shell-cockpit-workspace-view-archive ()
@@ -439,7 +433,7 @@ CONTEXTS is the list of context files to render."
        (when (y-or-n-p (format "Discard historical session %s? " name))
          (agent-shell-cockpit-session-forget workspace session)
          (agent-shell-cockpit-workspace-view-refresh))))
-    (_ (user-error "Select a remembered context source or historical session"))))
+    (_ (user-error "Select a historical session"))))
 
 (defun agent-shell-cockpit-workspace-view-back ()
   "Return to the cockpit dashboard."
@@ -456,9 +450,11 @@ CONTEXTS is the list of context files to render."
 (transient-define-prefix agent-shell-cockpit-workspace-view-dispatch ()
                          "Invoke a Cockpit workspace command from the available commands."
                          ["Workspace and agent commands"
-                          [("R" "Restore / recover" agent-shell-cockpit-workspace-view-recover)
-                           ("s" "Start and configure" agent-shell-cockpit-workspace-view-start-agent)
-                           ("S" "Start with defaults" agent-shell-cockpit-workspace-view-start-agent-defaults)
+                          [("R" "Continue interrupted operation" agent-shell-cockpit-workspace-view-recover
+                            :inapt-if-not (lambda ()
+					    (map-elt (agent-shell-cockpit-workspace-view--workspace) 'operation)))
+                           ("s" "Start agent" agent-shell-cockpit-workspace-view-start-agent)
+			   ("S" "Start agent" agent-shell-cockpit-workspace-view-start-agent)
                            ("a" "Agent actions" agent-shell-cockpit-agent-actions
                             :inapt-if-not
                             (lambda ()
@@ -475,9 +471,9 @@ CONTEXTS is the list of context files to render."
                               (agent-shell-cockpit-workspace-view--type-at-point-p
                                'session-history)))]
                           [("c" "Create context file" agent-shell-cockpit-workspace-view-add-context)
-                           ("m" "Open worktree" agent-shell-cockpit-workspace-view-open-worktree)
-                           ("u" "Adopt worktree" agent-shell-cockpit-workspace-view-adopt)
-                           ("P" "Preserve local files" agent-shell-cockpit-workspace-view-preserve)
+                           ("P" "Store local files for archive" agent-shell-cockpit-workspace-view-preserve
+                            :inapt-if-not (lambda ()
+					    (agent-shell-cockpit-workspace-view--type-at-point-p 'repository)))
                            ("t" "Rename title" agent-shell-cockpit-workspace-view-title)
                            ("e" "Edit context" agent-shell-cockpit-workspace-view-edit-context)
                            ("+" "Add worktree" agent-shell-cockpit-add-worktree)
@@ -489,27 +485,42 @@ CONTEXTS is the list of context files to render."
                            ("b" "Return to dashboard" agent-shell-cockpit-workspace-view-back)]]
                          ["Instruction files"
                           ("I" "Visit instruction" agent-shell-cockpit-visit-instruction)
-]
-                         ["Essential commands"
-                          [("r" "       Refresh current buffer" agent-shell-cockpit-refresh)
-                           ("q" "       Bury current buffer" agent-shell-cockpit-quit)
-                           ("<tab>" "   Toggle section at point" agent-shell-cockpit-toggle-section)
-                           ("<return>" "Visit thing at point" agent-shell-cockpit-open)]
-                          [("n" "       Next section" agent-shell-cockpit-next)
-                           ("p" "       Previous section" agent-shell-cockpit-previous)]])
+			  ]
+                         ["Agent navigation"
+			  ("v" "Preview agent" agent-shell-cockpit-agent-preview)
+			  ("]" "Next attention" agent-shell-cockpit-next-attention)]
+			 ["Essential commands"
+			  [("r" "Refresh" agent-shell-cockpit-refresh)
+			   ("q" "Return / bury buffer" agent-shell-cockpit-quit)
+			   ("TAB" "Toggle section" agent-shell-cockpit-toggle-section)
+			   ("RET" "Visit thing at point" agent-shell-cockpit-open)]
+			  [("n" "Next section" agent-shell-cockpit-next)
+			   ("p" "Previous section" agent-shell-cockpit-previous)
+			   ("M-<" "First section" agent-shell-cockpit-first)
+			   ("M->" "Last section" agent-shell-cockpit-last)]
+			  [("<down>" "Next section" agent-shell-cockpit-next)
+			   ("<up>" "Previous section" agent-shell-cockpit-previous)
+			   ("C-n" "Next line" next-line)
+			   ("C-p" "Previous line" previous-line)]
+			  [("j" "Next section (Evil)" agent-shell-cockpit-next
+			    :if (lambda () (bound-and-true-p evil-local-mode)))
+			   ("k" "Previous section (Evil)" agent-shell-cockpit-previous
+			    :if (lambda () (bound-and-true-p evil-local-mode)))]]
+			 [:hide (lambda () t)
+				("<tab>" "Toggle section" agent-shell-cockpit-toggle-section)
+				("<return>" "Visit thing at point" agent-shell-cockpit-open)])
 
 (defvar-keymap agent-shell-cockpit-workspace-view-mode-map
   :parent agent-shell-cockpit-ui-mode-map
+  "v" #'agent-shell-cockpit-agent-preview
   "I" #'agent-shell-cockpit-visit-instruction
   "R" #'agent-shell-cockpit-workspace-view-recover
   "s" #'agent-shell-cockpit-workspace-view-start-agent
-  "S" #'agent-shell-cockpit-workspace-view-start-agent-defaults
+  "S" #'agent-shell-cockpit-workspace-view-start-agent
   "a" #'agent-shell-cockpit-agent-actions
   "x" #'agent-shell-cockpit-workspace-view-forget-session
   "K" #'agent-shell-cockpit-agent-kill
   "c" #'agent-shell-cockpit-workspace-view-add-context
-  "m" #'agent-shell-cockpit-workspace-view-open-worktree
-  "u" #'agent-shell-cockpit-workspace-view-adopt
   "P" #'agent-shell-cockpit-workspace-view-preserve
   "t" #'agent-shell-cockpit-workspace-view-title
   "]" #'agent-shell-cockpit-next-attention
@@ -602,23 +613,6 @@ CONTEXTS is the list of context files to render."
     (user-error "Select a repository row"))
   (agent-shell-cockpit-ui-object-at-point))
 
-(defun agent-shell-cockpit-workspace-view-adopt ()
-  "Adopt the selected discovered worktree after explicit confirmation."
-  (interactive)
-  (let ((repository (agent-shell-cockpit-workspace-view--repository))
-        (workspace (agent-shell-cockpit-workspace-view--workspace)))
-    (when (yes-or-no-p (format "Let Cockpit manage and remove worktree %s? " (map-elt repository 'name)))
-      (agent-shell-cockpit-git-adopt workspace repository)
-      (agent-shell-cockpit-refresh))))
-
-(defun agent-shell-cockpit-workspace-view-open-worktree ()
-  "Open the selected worktree using the configured repository opener."
-  (interactive)
-  (funcall agent-shell-cockpit-worktree-open-function
-           (agent-shell-cockpit-workspace-repository-path
-            (agent-shell-cockpit-workspace-view--workspace)
-            (agent-shell-cockpit-workspace-view--repository))))
-
 (defun agent-shell-cockpit-workspace-view-preserve ()
   "Move selected ignored/untracked files into workspace preservation storage."
   (interactive)
@@ -631,19 +625,8 @@ CONTEXTS is the list of context files to render."
          (selected (completing-read-multiple "Preserve local files (moves out of worktree): " files nil t))
          (destination (expand-file-name (concat ".agent-shell-cockpit/preserved/" (map-elt repository 'name))
                                         (map-elt workspace 'root))))
-    (when (agent-shell-cockpit-session-buffers-in-directory path)
-      (user-error "Stop agents in this repository first"))
-    (dolist (file selected)
-      (let ((source (expand-file-name file path)) (target (expand-file-name file destination)))
-        (unless (and (file-in-directory-p source path) (file-regular-p source)
-                     (not (file-symlink-p source)) (file-in-directory-p target (map-elt workspace 'root))
-                     (not (file-exists-p target)) (not (file-symlink-p target)))
-          (user-error "Cannot preserve path safely: %s" file))))
     (when (and selected (yes-or-no-p (format "Move %d selected files into workspace preservation storage? " (length selected))))
-      (dolist (file selected)
-        (let ((target (expand-file-name file destination)))
-          (make-directory (file-name-directory target) t)
-          (rename-file (expand-file-name file path) target)))
+      (agent-shell-cockpit-lifecycle-preserve workspace repository selected)
       (agent-shell-cockpit-refresh)
       (message "Preserved files in %s; restoration puts them back" destination))))
 
@@ -660,6 +643,19 @@ CONTEXTS is the list of context files to render."
                       (agent-shell-cockpit-workspace-restore workspace))))
         (kill-buffer (current-buffer))
         (agent-shell-cockpit-workspace-view result)))))
+
+(defun agent-shell-cockpit-workspace-view--after-move (source destination)
+  "Follow a workspace move from SOURCE to DESTINATION in every detail view."
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer
+      (when (and agent-shell-cockpit-workspace-view--root
+                 (equal (file-name-as-directory agent-shell-cockpit-workspace-view--root)
+                        (file-name-as-directory source)))
+        (setq agent-shell-cockpit-workspace-view--root
+              (file-name-as-directory destination))))))
+
+(add-hook 'agent-shell-cockpit-workspace-move-hook
+          #'agent-shell-cockpit-workspace-view--after-move)
 
 (provide 'agent-shell-cockpit-workspace-view)
 

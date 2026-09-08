@@ -18,6 +18,7 @@
 (require 'transient)
 (require 'agent-shell-cockpit-session)
 (require 'agent-shell-cockpit-ui)
+(require 'agent-shell-cockpit-instructions)
 
 (declare-function agent-shell-cockpit-refresh "agent-shell-cockpit-ui")
 
@@ -63,6 +64,15 @@
 (defvar-local agent-shell-cockpit-agent--preview-buffer nil
   "Agent currently previewed from the current Cockpit buffer.")
 
+(defun agent-shell-cockpit-agent-launch (&optional workspace directory)
+  "Choose instructions and start an agent in WORKSPACE or standalone DIRECTORY."
+  (let ((text (agent-shell-cockpit-instructions-render
+               (agent-shell-cockpit-instructions-read workspace) workspace)))
+    (if workspace
+        (agent-shell-cockpit-session-start-select workspace text)
+      (agent-shell-cockpit-session-start-target
+       (agent-shell-cockpit-session-target (or directory default-directory)) text))))
+
 (defun agent-shell-cockpit-agent-live-at-point-p ()
   "Return non-nil when point is on a live agent row."
   (memq (agent-shell-cockpit-ui-object-type-at-point)
@@ -81,17 +91,6 @@
   "Return a readable agent name for IDENTIFIER."
   (capitalize
    (replace-regexp-in-string "[-_]+" " " (or identifier "agent"))))
-
-(defun agent-shell-cockpit-agent--ordinal (workspace agent-id session-id)
-  "Return SESSION-ID's one-based ordinal for AGENT-ID in WORKSPACE."
-  (let ((ordinal 0)
-        found)
-    (dolist (session (map-elt workspace 'sessions))
-      (when (equal (map-elt session 'agentId) agent-id)
-        (setq ordinal (1+ ordinal))
-        (when (equal (map-elt session 'sessionId) session-id)
-          (setq found ordinal))))
-    (or found (1+ ordinal))))
 
 (defun agent-shell-cockpit-agent--name (agent-id session-id workspace)
   "Return a stable display name for AGENT-ID and SESSION-ID in WORKSPACE."
@@ -197,7 +196,11 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
                  agent-shell-cockpit-agent--preview-buffer))
     (quit-restore-window agent-shell-cockpit-agent--preview-window 'bury))
   (setq agent-shell-cockpit-agent--preview-window nil
-        agent-shell-cockpit-agent--preview-buffer nil))
+        agent-shell-cockpit-agent--preview-buffer nil)
+  (unless (seq-some (lambda (buffer)
+                      (buffer-local-value 'agent-shell-cockpit-agent--preview-window buffer))
+                    (buffer-list))
+    (remove-hook 'window-state-change-functions #'agent-shell-cockpit-agent--preview-window-change)))
 
 (defun agent-shell-cockpit-agent-preview-update ()
   "Preview the live agent at point in a temporary right-side window."
@@ -206,7 +209,10 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
     (if (not (buffer-live-p buffer))
         (agent-shell-cockpit-agent-preview-close)
       (unless (and (eq buffer agent-shell-cockpit-agent--preview-buffer)
-                   (window-live-p agent-shell-cockpit-agent--preview-window))
+                   (window-live-p agent-shell-cockpit-agent--preview-window)
+                   (eq (window-buffer agent-shell-cockpit-agent--preview-window) buffer)
+                   (eq (window-parameter agent-shell-cockpit-agent--preview-window
+                                         'agent-shell-cockpit-preview) (current-buffer)))
         (agent-shell-cockpit-agent-preview-close)
         (let ((window
                (display-buffer
@@ -216,10 +222,14 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
                   (window-width . ,agent-shell-cockpit-agent-preview-width)
                   (window-parameters
                    . ((agent-shell-cockpit-preview . ,(current-buffer))))))))
-          (setq agent-shell-cockpit-agent--preview-window window
-                agent-shell-cockpit-agent--preview-buffer buffer)
-          (set-window-point window
-                            (with-current-buffer buffer (point-max))))))))
+          (when (and (window-live-p window)
+                     (eq (window-parameter window 'agent-shell-cockpit-preview)
+                         (current-buffer)))
+            (add-hook 'window-state-change-functions #'agent-shell-cockpit-agent--preview-window-change)
+            (setq agent-shell-cockpit-agent--preview-window window
+                  agent-shell-cockpit-agent--preview-buffer buffer)
+            (set-window-point window
+                              (with-current-buffer buffer (point-max)))))))))
 
 (defun agent-shell-cockpit-agent-preview ()
   "Manually show and pin the agent preview, or close a pinned preview."
@@ -254,9 +264,6 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
                  (not (get-buffer-window buffer t)))
         (agent-shell-cockpit-agent-preview-close)))))
 
-(add-hook 'window-state-change-functions #'agent-shell-cockpit-agent--preview-window-change)
-(define-key agent-shell-cockpit-ui-mode-map (kbd "v") #'agent-shell-cockpit-agent-preview)
-
 (define-minor-mode agent-shell-cockpit-agent-preview-mode
   "Preview the live agent at point in a right-side window."
   :lighter nil
@@ -271,6 +278,8 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
                  #'agent-shell-cockpit-agent--preview-schedule t)
     (remove-hook 'kill-buffer-hook
                  #'agent-shell-cockpit-agent-preview-close t)
+    (remove-hook 'change-major-mode-hook
+                 #'agent-shell-cockpit-agent-preview-close t)
     (agent-shell-cockpit-agent-preview-close)))
 
 (defun agent-shell-cockpit-agent--invoke (command)
@@ -280,6 +289,23 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
   (agent-shell-cockpit-agent-preview-close)
   (agent-shell-cockpit-session-invoke
    agent-shell-cockpit-agent--action-buffer command))
+
+(defun agent-shell-cockpit-agent--configure-option (command)
+  "Run native option COMMAND and persist its confirmed result."
+  (let ((buffer agent-shell-cockpit-agent--action-buffer))
+    (unless (buffer-live-p buffer) (user-error "Agent buffer is no longer live"))
+    (with-current-buffer buffer
+      (when (agent-shell-cockpit-agent-shell-configuration-pending-p)
+        (user-error "Wait for the pending setting change before choosing another"))
+      (unless (agent-shell-cockpit-agent-shell-ready-p)
+        (user-error "Initialization is incomplete; visit the agent buffer to inspect its connection"))
+      (funcall command
+               (lambda (&rest _)
+                 (when (buffer-live-p buffer)
+                   (with-current-buffer buffer
+                     (agent-shell-cockpit-session--observe buffer)
+                     (run-hooks 'agent-shell-cockpit-session-change-hook))
+                   (message "Agent setting confirmed")))))))
 
 (defmacro agent-shell-cockpit-agent--define-action (name command)
   "Define Cockpit action NAME delegating to native COMMAND."
@@ -294,16 +320,26 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
  agent-shell-cockpit-agent-fork agent-shell-fork)
 (agent-shell-cockpit-agent--define-action
  agent-shell-cockpit-agent-reload agent-shell-reload)
-(agent-shell-cockpit-agent--define-action
- agent-shell-cockpit-agent-cycle-mode agent-shell-cycle-session-mode)
-(agent-shell-cockpit-agent--define-action
- agent-shell-cockpit-agent-set-mode agent-shell-set-session-mode)
-(agent-shell-cockpit-agent--define-action
- agent-shell-cockpit-agent-set-model agent-shell-set-session-model)
-(agent-shell-cockpit-agent--define-action
- agent-shell-cockpit-agent-set-thought agent-shell-set-session-thought-level)
-(agent-shell-cockpit-agent--define-action
- agent-shell-cockpit-agent-set-option agent-shell-set-session-config-option)
+(defun agent-shell-cockpit-agent-cycle-mode ()
+  "Run `agent-shell-cycle-session-mode' after initialization."
+  (interactive)
+  (agent-shell-cockpit-agent--configure-option #'agent-shell-cycle-session-mode))
+(defun agent-shell-cockpit-agent-set-mode ()
+  "Run `agent-shell-set-session-mode' after initialization."
+  (interactive)
+  (agent-shell-cockpit-agent--configure-option #'agent-shell-set-session-mode))
+(defun agent-shell-cockpit-agent-set-model ()
+  "Run `agent-shell-set-session-model' after initialization."
+  (interactive)
+  (agent-shell-cockpit-agent--configure-option #'agent-shell-set-session-model))
+(defun agent-shell-cockpit-agent-set-thought ()
+  "Run `agent-shell-set-session-thought-level' after initialization."
+  (interactive)
+  (agent-shell-cockpit-agent--configure-option #'agent-shell-set-session-thought-level))
+(defun agent-shell-cockpit-agent-set-option ()
+  "Run `agent-shell-set-session-config-option' after initialization."
+  (interactive)
+  (agent-shell-cockpit-agent--configure-option #'agent-shell-set-session-config-option))
 (agent-shell-cockpit-agent--define-action
  agent-shell-cockpit-agent-usage agent-shell-show-usage)
 (agent-shell-cockpit-agent--define-action
@@ -315,40 +351,6 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
 (agent-shell-cockpit-agent--define-action
  agent-shell-cockpit-agent-clear agent-shell-clear-buffer)
 
-(defun agent-shell-cockpit-agent--permission-available-p (key)
-  "Return non-nil when the selected agent offers permission KEY."
-  (and (buffer-live-p agent-shell-cockpit-agent--action-buffer)
-       (agent-shell-cockpit-agent-shell-permission-action-available-p
-        agent-shell-cockpit-agent--action-buffer key)))
-
-(defun agent-shell-cockpit-agent--permission (key)
-  "Invoke native permission KEY in the selected agent."
-  (unless (buffer-live-p agent-shell-cockpit-agent--action-buffer)
-    (user-error "Selected agent buffer is no longer live"))
-  (agent-shell-cockpit-agent-shell-permission-action
-   agent-shell-cockpit-agent--action-buffer key)
-  (agent-shell-cockpit-refresh))
-
-(defun agent-shell-cockpit-agent-permission-allow-once ()
-  "Run the selected agent's native allow-once permission action."
-  (interactive)
-  (agent-shell-cockpit-agent--permission "y"))
-
-(defun agent-shell-cockpit-agent-permission-allow-always ()
-  "Run the selected agent's native always-allow permission action."
-  (interactive)
-  (agent-shell-cockpit-agent--permission "!"))
-
-(defun agent-shell-cockpit-agent-permission-reject ()
-  "Run the selected agent's native reject and interrupt action."
-  (interactive)
-  (agent-shell-cockpit-agent--permission "C-c C-c"))
-
-(defun agent-shell-cockpit-agent-permission-view-diff ()
-  "Run the selected agent's native permission-diff action."
-  (interactive)
-  (agent-shell-cockpit-agent--permission "v"))
-
 (defun agent-shell-cockpit-agent-kill ()
   "Kill the live agent at point after confirmation."
   (interactive)
@@ -356,8 +358,7 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
     (when (yes-or-no-p (format "Kill agent session %s? "
                                (buffer-name buffer)))
       (with-current-buffer buffer
-        (let ((kill-buffer-query-functions nil))
-          (kill-buffer buffer)))
+        (kill-buffer buffer))
       (agent-shell-cockpit-refresh))))
 
 (agent-shell-cockpit-agent--define-action
@@ -366,47 +367,27 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
  agent-shell-cockpit-agent-rename agent-shell-rename-buffer)
 
 (transient-define-prefix agent-shell-cockpit-agent-actions-menu ()
-                         "Run native commands in a live agent-shell buffer."
-                         [["Request"
-                           ("p" "Permission choices" agent-shell-cockpit-agent-permissions)]
-                          ["Control"
-                           ("s" "Steer" agent-shell-cockpit-agent-steer)
-                           ("r" "Rename buffer" agent-shell-cockpit-agent-rename)
-                           ("i" "Interrupt" agent-shell-cockpit-agent-interrupt)
-                           ("f" "Fork" agent-shell-cockpit-agent-fork)
-                           ("R" "Reload" agent-shell-cockpit-agent-reload)]
-                          ["Session"
-                           ("m" "Cycle mode" agent-shell-cockpit-agent-cycle-mode)
-                           ("M" "Set mode" agent-shell-cockpit-agent-set-mode)
-                           ("v" "Set model" agent-shell-cockpit-agent-set-model)
-                           ("t" "Set thought level" agent-shell-cockpit-agent-set-thought)
-                           ("o" "Set option" agent-shell-cockpit-agent-set-option)]
-                          ["Inspect"
-                           ("u" "Usage" agent-shell-cockpit-agent-usage)
-                           ("c" "Copy session ID" agent-shell-cockpit-agent-copy-session-id)
-                           ("w" "Copy last output" agent-shell-cockpit-agent-copy-output)
-                           ("T" "Open transcript" agent-shell-cockpit-agent-open-transcript)
-                           ("C" "Clear buffer" agent-shell-cockpit-agent-clear)]])
-
-(transient-define-prefix agent-shell-cockpit-agent-configure-menu ()
-  "Configure the newly connected agent before sending its prepared input."
-  [["Configure agent (choices become available after connection)"
-    ("v" "Model" agent-shell-cockpit-agent-set-model :transient t)
-    ("t" "Reasoning" agent-shell-cockpit-agent-set-thought :transient t)
-    ("m" "Session / approval mode" agent-shell-cockpit-agent-set-mode :transient t)
-    ("o" "Other advertised option" agent-shell-cockpit-agent-set-option :transient t)
-    ("RET" "Done — visit agent" agent-shell-cockpit-agent-finish-configuration)]])
-
-(defun agent-shell-cockpit-agent-finish-configuration ()
-  "Visit the agent being configured without submitting its input."
-  (interactive)
-  (agent-shell-cockpit-session-visit agent-shell-cockpit-agent--action-buffer))
-
-(defun agent-shell-cockpit-agent-configure (buffer)
-  "Open native configuration controls for newly started BUFFER."
-  (unless (buffer-live-p buffer) (user-error "Agent did not create a buffer"))
-  (setq agent-shell-cockpit-agent--action-buffer buffer)
-  (agent-shell-cockpit-agent-configure-menu))
+  "Run native commands in a live agent-shell buffer."
+  [["Request"
+    ("p" "Permission choices" agent-shell-cockpit-agent-permissions)]
+   ["Control"
+    ("s" "Steer" agent-shell-cockpit-agent-steer)
+    ("r" "Rename buffer" agent-shell-cockpit-agent-rename)
+    ("i" "Interrupt" agent-shell-cockpit-agent-interrupt)
+    ("f" "Fork" agent-shell-cockpit-agent-fork)
+    ("R" "Reload" agent-shell-cockpit-agent-reload)]
+   ["Session"
+    ("m" "Cycle mode" agent-shell-cockpit-agent-cycle-mode)
+    ("M" "Set mode" agent-shell-cockpit-agent-set-mode)
+    ("v" "Set model" agent-shell-cockpit-agent-set-model)
+    ("t" "Set thought level" agent-shell-cockpit-agent-set-thought)
+    ("o" "Set option" agent-shell-cockpit-agent-set-option)]
+   ["Inspect"
+    ("u" "Usage" agent-shell-cockpit-agent-usage)
+    ("c" "Copy session ID" agent-shell-cockpit-agent-copy-session-id)
+    ("w" "Copy last output" agent-shell-cockpit-agent-copy-output)
+    ("T" "Open transcript" agent-shell-cockpit-agent-open-transcript)
+    ("C" "Clear buffer" agent-shell-cockpit-agent-clear)]])
 
 (defun agent-shell-cockpit-agent-permissions ()
   "Choose an actual native permission option, validating it before invocation."
@@ -438,7 +419,7 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
                              (eq (agent-shell-cockpit-session-status (oref section object)) 'attention))
                     (push (oref section start) positions))
                   (mapc #'collect (oref section children))))
-      (when magit-root-section (collect magit-root-section)))
+               (when magit-root-section (collect magit-root-section)))
     (setq positions (sort positions #'<))
     (unless positions (user-error "No agents need attention in this view"))
     (goto-char (or (seq-find (lambda (position) (> position start)) positions)

@@ -4,10 +4,10 @@ STRAIGHT_BUILD ?= $(HOME)/.emacs.d/straight/build
 DEPENDENCY_NAMES = agent-shell shell-maker acp magit-section transient compat cond-let llama seq dash map package-lint
 DEPENDENCY_DIRS = $(foreach name,$(DEPENDENCY_NAMES),$(wildcard $(STRAIGHT_BUILD)/$(name) $(STRAIGHT_BUILD)/$(name)-[0-9]*))
 EXTRA_LOAD_PATH ?=
-DEPENDENCY_LOAD_PATH = $(foreach dir,$(DEPENDENCY_DIRS),-L $(dir)) $(EXTRA_LOAD_PATH)
+DEPENDENCY_LOAD_PATH = $(EXTRA_LOAD_PATH) $(foreach dir,$(DEPENDENCY_DIRS),-L $(dir))
 PACKAGE_FILES = $(wildcard agent-shell-cockpit*.el)
 
-.PHONY: all check test integration optional-integration smoke compile checkdoc lint clean
+.PHONY: all check test integration optional-integration smoke compile checkdoc lint package clean
 
 all: check
 
@@ -26,10 +26,10 @@ test:
 
 integration:
 	$(EMACS_BATCH) $(DEPENDENCY_LOAD_PATH) -L . -L test \
-	  -l agent-shell-cockpit-integration-test -f ert-run-tests-batch-and-exit
+	  -l agent-shell-cockpit-integration-test -l agent-shell-cockpit-safety-test -f ert-run-tests-batch-and-exit
 
 optional-integration:
-	$(EMACS_BATCH) $(DEPENDENCY_LOAD_PATH) $(foreach name,evil goto-chg org-roam emacsql consult,$(foreach dir,$(wildcard $(STRAIGHT_BUILD)/$(name) $(STRAIGHT_BUILD)/$(name)-[0-9]*),-L $(dir))) -L . \
+	$(EMACS_BATCH) $(DEPENDENCY_LOAD_PATH) $(foreach name,evil goto-chg org-roam emacsql,$(foreach dir,$(wildcard $(STRAIGHT_BUILD)/$(name) $(STRAIGHT_BUILD)/$(name)-[0-9]*),-L $(dir))) -L . \
 	  -l test/agent-shell-cockpit-optional-test.el -f ert-run-tests-batch-and-exit
 
 smoke:
@@ -42,13 +42,15 @@ compile:
 
 checkdoc:
 	$(EMACS_BATCH) $(DEPENDENCY_LOAD_PATH) -L . \
-	  --eval '(require (quote checkdoc))' \
-	  --eval '(mapc (lambda (file) (checkdoc-file file)) command-line-args-left)' \
+	  -l test/checkdoc-runner.el \
 	  $(PACKAGE_FILES)
 
 lint:
 	$(EMACS_BATCH) $(DEPENDENCY_LOAD_PATH) -L . \
 	  -l package-lint -l test/lint-dependencies.el $(PACKAGE_FILES)
+
+package:
+	$(EMACS_BATCH) $(DEPENDENCY_LOAD_PATH) -L . -l test/build-package.el
 
 clean:
 	$(RM) *.elc test/*.elc

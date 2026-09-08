@@ -17,6 +17,8 @@
 (defvar org-roam-directory)
 (declare-function org-roam-node-from-id "org-roam-node")
 (declare-function org-roam-node-visit "org-roam-node")
+(declare-function org-roam-node-file "org-roam-node")
+(declare-function org-roam-node-point "org-roam-node")
 
 (defun agent-shell-cockpit-org-roam--load ()
   "Load the optional Org-roam dependency or report a useful error."
@@ -50,10 +52,19 @@
     (unless node (user-error "Org-roam node not found: %s" (cadr source)))
     (org-roam-node-visit node)))
 
+(defun agent-shell-cockpit-org-roam--preview (source workspace buffer)
+  "Preview the Org-roam node SOURCE in WORKSPACE using BUFFER."
+  (agent-shell-cockpit-org-roam--reference source workspace)
+  (let ((node (org-roam-node-from-id (cadr source))))
+    (unless node (user-error "Org-roam node not found: %s" (cadr source)))
+    (agent-shell-cockpit-instructions-preview-file
+     (org-roam-node-file node) buffer (org-roam-node-point node))))
+
 (agent-shell-cockpit-register-instruction-adapter
  'org-roam :reference #'agent-shell-cockpit-org-roam--reference
  :bootstrap #'agent-shell-cockpit-org-roam--bootstrap
- :visit #'agent-shell-cockpit-org-roam--visit)
+ :visit #'agent-shell-cockpit-org-roam--visit
+ :preview #'agent-shell-cockpit-org-roam--preview)
 
 (provide 'agent-shell-cockpit-org-roam)
 ;;; agent-shell-cockpit-org-roam.el ends here

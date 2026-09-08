@@ -19,9 +19,10 @@
 (require 'subr-x)
 (require 'agent-shell-cockpit-store)
 
-(declare-function agent-shell-cockpit-git-clean-p "agent-shell-cockpit-git")
-(declare-function agent-shell-cockpit-git-remove-worktree "agent-shell-cockpit-git")
-(declare-function agent-shell-cockpit-session-live-buffers "agent-shell-cockpit-session")
+
+(defvar agent-shell-cockpit-workspace-move-hook nil
+  "Hook called with old and new paths after a Cockpit file or directory move.
+Visiting file buffers have already been retargeted when this hook runs.")
 
 (defun agent-shell-cockpit-workspace--validate-name (name)
   "Validate workspace directory NAME and return it."
@@ -37,6 +38,9 @@ The explicit display title initially defaults to NAME."
   (agent-shell-cockpit-workspace--validate-name name)
   (agent-shell-cockpit-workspace--validate-name
    agent-shell-cockpit-worktrees-directory-name)
+  (agent-shell-cockpit-workspace--validate-name agent-shell-cockpit-context-directory-name)
+  (when (equal agent-shell-cockpit-context-directory-name agent-shell-cockpit-worktrees-directory-name)
+    (user-error "Context and worktree directories must differ"))
   (let* ((parent (file-name-as-directory
                   (expand-file-name agent-shell-cockpit-workspace-directory)))
          (target (expand-file-name name parent))
@@ -75,6 +79,7 @@ The explicit display title initially defaults to NAME."
 
 (defun agent-shell-cockpit-workspace-context-path (workspace)
   "Return WORKSPACE's absolute context directory."
+  (agent-shell-cockpit-workspace--validate-name agent-shell-cockpit-context-directory-name)
   (file-name-as-directory
    (expand-file-name agent-shell-cockpit-context-directory-name
                      (map-elt workspace 'root))))
@@ -184,21 +189,7 @@ Session metadata remains available only in the timestamped backup."
 (autoload 'agent-shell-cockpit-workspace-archive "agent-shell-cockpit-lifecycle")
 (autoload 'agent-shell-cockpit-workspace-restore "agent-shell-cockpit-lifecycle")
 
-(defun agent-shell-cockpit-workspace-delete-archive (workspace)
-  "Permanently delete archived WORKSPACE and all of its files.
-Signal a user error unless the workspace root is the expected direct child
-of the configured archive directory.  Confirmation belongs to the caller."
-  (let* ((root (file-name-as-directory
-                (expand-file-name (map-elt workspace 'root))))
-         (archive-root (file-name-as-directory
-                        (agent-shell-cockpit-store-archive-directory)))
-         (parent (file-name-directory (directory-file-name root))))
-    (unless (and (file-directory-p root)
-                 (file-in-directory-p root archive-root)
-                 (file-equal-p parent archive-root))
-      (user-error "Refusing to delete path outside the archive: %s" root))
-    (delete-directory root t)
-    t))
+(autoload 'agent-shell-cockpit-workspace-delete-archive "agent-shell-cockpit-lifecycle")
 
 (provide 'agent-shell-cockpit-workspace)
 

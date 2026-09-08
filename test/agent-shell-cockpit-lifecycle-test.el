@@ -51,11 +51,8 @@
            (should-error (agent-shell-cockpit-workspace-archive workspace) :type 'user-error))
        (kill-buffer buffer)))))
 
-(ert-deftest cockpit-removal-refuses-unadopted-and-locked-worktrees ()
+(ert-deftest cockpit-removal-refuses-locked-worktrees ()
   (cockpit-test-with-worktree
-   (let ((unowned (copy-tree repository)))
-     (agent-shell-cockpit-store-set unowned 'owned nil)
-     (should-error (agent-shell-cockpit-git-check-removal workspace unowned) :type 'user-error))
    (agent-shell-cockpit-test-git source "worktree" "lock" worktree)
    (should-error (agent-shell-cockpit-git-check-removal workspace repository) :type 'user-error)))
 
@@ -120,3 +117,34 @@
 
 (provide 'agent-shell-cockpit-lifecycle-test)
 ;;; agent-shell-cockpit-lifecycle-test.el ends here
+
+(ert-deftest cockpit-archive-restores-externally-created-worktree ()
+  (cockpit-test-with-worktree
+   (let* ((external (expand-file-name "external" (agent-shell-cockpit-workspace-worktrees-path workspace)))
+          (head (agent-shell-cockpit-test-git source "rev-parse" "HEAD")))
+     (agent-shell-cockpit-test-git source "worktree" "add" "--detach" external head)
+     (should-not (seq-find (lambda (item) (equal (map-elt item 'name) "external"))
+                          (map-elt workspace 'worktrees)))
+     (let* ((archive (agent-shell-cockpit-workspace-archive workspace))
+            (entry (seq-find (lambda (item) (equal (map-elt item 'name) "external"))
+                             (map-elt archive 'worktrees))))
+       (should-not (file-exists-p external))
+       (should (equal head (agent-shell-cockpit-test-git source "rev-parse" (map-elt entry 'retention))))
+       (let ((restored (agent-shell-cockpit-workspace-restore archive)))
+         (should (equal head (agent-shell-cockpit-test-git
+                             (agent-shell-cockpit-workspace-repository-path restored entry)
+                             "rev-parse" "HEAD"))))))))
+
+(ert-deftest cockpit-removal-refuses-discovered-directory-and-symlink ()
+  (cockpit-test-with-worktree
+   (let* ((container (agent-shell-cockpit-workspace-worktrees-path workspace))
+          (ordinary (expand-file-name "ordinary" container))
+          (link (expand-file-name "link" container)))
+     (make-directory ordinary)
+     (make-symbolic-link worktree link)
+     (dolist (name '("ordinary" "link"))
+       (should-error (agent-shell-cockpit-git-remove-worktree workspace `((name . ,name)))
+                     :type 'user-error))
+     (should (file-directory-p ordinary))
+     (should (file-symlink-p link))
+     (should (file-directory-p worktree)))))

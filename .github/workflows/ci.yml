@@ -10,6 +10,7 @@ jobs:
     strategy:
       matrix:
         emacs: ["29.1", "31.1"]
+        dependencies: [minimum, current]
     steps:
       - uses: actions/checkout@v4
       - uses: purcell/setup-emacs@master
@@ -27,8 +28,18 @@ jobs:
             --eval "(package-install 'transient)" \
             --eval "(package-install 'package-lint)" \
             --eval "(package-install 'evil)" \
-            --eval "(package-install 'consult)" \
             --eval "(package-install 'org-roam)"
+      - name: Select declared minimum direct dependencies
+        if: matrix.dependencies == 'minimum'
+        run: |
+          mkdir -p "$RUNNER_TEMP/cockpit-minimum/agent-shell" "$RUNNER_TEMP/cockpit-minimum/ui"
+          curl -fsSL https://api.github.com/repos/xenodium/agent-shell/tarball/refs/tags/v0.75.2 |
+            tar -xz -C "$RUNNER_TEMP/cockpit-minimum/agent-shell" --strip-components=1
+          curl -fsSL https://raw.githubusercontent.com/magit/magit/v4.0.0/lisp/magit-section.el \
+            -o "$RUNNER_TEMP/cockpit-minimum/ui/magit-section.el"
+          curl -fsSL https://raw.githubusercontent.com/magit/transient/v0.7.0/lisp/transient.el \
+            -o "$RUNNER_TEMP/cockpit-minimum/ui/transient.el"
+          echo "EXTRA_LOAD_PATH=-L $RUNNER_TEMP/cockpit-minimum/agent-shell -L $RUNNER_TEMP/cockpit-minimum/ui" >> "$GITHUB_ENV"
       - name: Run isolated tests
         run: make test integration optional-integration smoke STRAIGHT_BUILD=~/.emacs.d/elpa
       - name: Compile and check documentation

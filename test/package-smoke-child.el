@@ -1,7 +1,9 @@
 ;;; package-smoke-child.el --- Fresh autoload entry smoke test -*- lexical-binding: t; -*-
 
-(unless (autoloadp (symbol-function 'agent-shell-cockpit))
-  (error "Main command did not autoload"))
+(dolist (command '(agent-shell-cockpit agent-shell-cockpit-insert-instruction
+                   agent-shell-cockpit-visit-instruction))
+  (unless (autoloadp (symbol-function command))
+    (error "Command did not autoload: %s" command)))
 (when (featurep 'agent-shell-cockpit) (error "Package loaded before its entry point"))
 (defvar agent-shell-cockpit-workspace-directory)
 (defvar agent-shell-cockpit-refresh-interval)

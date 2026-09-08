@@ -50,7 +50,7 @@
         (insert "Existing prompt")
         (should-error (agent-shell-cockpit-insert-instruction) :type 'user-error)
         (should (equal (buffer-string) "Existing prompt")))
-      (should-error (agent-shell-cockpit-instructions-launch) :type 'user-error)
+      (should-error (agent-shell-cockpit-agent-launch) :type 'user-error)
       (should-not launched))))
 
 (ert-deftest cockpit-instructions-picker-uses-stable-ids-and-defaults ()
@@ -109,8 +109,54 @@
      (cl-letf (((symbol-function 'agent-shell-cockpit-instructions-read) (lambda (&rest _) '(brief)))
                ((symbol-function 'agent-shell-cockpit-session-start-select)
                 (lambda (target text) (should (equal target workspace)) (setq observed text))))
-       (agent-shell-cockpit-instructions-launch workspace)
+       (agent-shell-cockpit-agent-launch workspace)
        (should (equal observed "Be brief."))))))
 
 (provide 'agent-shell-cockpit-instructions-test)
 ;;; agent-shell-cockpit-instructions-test.el ends here
+
+(ert-deftest cockpit-instruction-preview-is-adapter-owned-and-not-injected ()
+  (let ((agent-shell-cockpit-instruction-adapters nil)
+        (agent-shell-cockpit-instructions '((a :title "Custom" :source (custom "id")))))
+    (agent-shell-cockpit-register-instruction-adapter
+     'custom :reference (lambda (&rest _) "reference:id")
+     :preview (lambda (_source _workspace buffer)
+                (with-current-buffer buffer (insert "PRIVATE SOURCE CONTENT") (text-mode))))
+    (with-temp-buffer
+      (agent-shell-cockpit-instructions-preview 'a nil (current-buffer))
+      (should (equal (buffer-string) "PRIVATE SOURCE CONTENT"))
+      (should buffer-read-only))
+    (should (equal (agent-shell-cockpit-instructions-render '(a))
+                   "Read and follow Custom:\nreference:id"))))
+
+(ert-deftest cockpit-instruction-file-preview-preserves-visiting-buffer ()
+  (let* ((file (make-temp-file "cockpit-preview-" nil ".org" "* Disk\n"))
+         (source (find-file-noselect file))
+         (agent-shell-cockpit-instructions `((a :title "Source" :source (file ,file)))))
+    (unwind-protect
+        (progn
+          (with-current-buffer source (goto-char (point-max)) (insert "Unsaved\n") (narrow-to-region 3 5))
+          (with-temp-buffer
+            (agent-shell-cockpit-instructions-preview 'a nil (current-buffer))
+            (should (derived-mode-p 'org-mode))
+            (should (equal (buffer-string) "* Disk\nUnsaved\n")))
+          (with-current-buffer source
+            (should (buffer-modified-p))
+            (should (buffer-narrowed-p))
+            (should (= (point-min) 3))))
+      (with-current-buffer source (set-buffer-modified-p nil))
+      (kill-buffer source)
+      (delete-file file))))
+
+(ert-deftest cockpit-instruction-org-id-preview-locates-source ()
+  (require 'org-id)
+  (let* ((file (make-temp-file "cockpit-id-preview-" nil ".org"
+                              "* First\n* Target\n:PROPERTIES:\n:ID: test-id\n:END:\nText\n"))
+         (agent-shell-cockpit-instructions '((a :title "ID" :source (org-id "test-id")))))
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-id-find-id-file) (lambda (_) file)))
+          (with-temp-buffer
+            (agent-shell-cockpit-instructions-preview 'a nil (current-buffer))
+            (should (derived-mode-p 'org-mode))
+            (should (looking-at ":ID: test-id"))))
+      (delete-file file))))

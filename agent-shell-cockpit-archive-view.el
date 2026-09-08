@@ -187,19 +187,32 @@ stored explicitly."
   (eq (agent-shell-cockpit-ui-object-type-at-point) 'archived-workspace))
 
 (transient-define-prefix agent-shell-cockpit-archive-view-dispatch ()
-  "Invoke a Cockpit archive command from the available commands."
-  ["Archive commands"
-   [("R" "Restore workspace" agent-shell-cockpit-archive-view-restore)
-    ("D" "Permanently delete workspace" agent-shell-cockpit-archive-view-delete
-     :inapt-if-not agent-shell-cockpit-archive-view--workspace-at-point-p)
-    ("b" "Return to dashboard" agent-shell-cockpit-archive-view-back)]]
-  ["Essential commands"
-   [("r" "       Refresh current buffer" agent-shell-cockpit-refresh)
-    ("q" "       Bury current buffer" agent-shell-cockpit-quit)
-    ("<return>" "Visit thing at point" agent-shell-cockpit-open
-     :inapt-if-not agent-shell-cockpit-archive-view--workspace-at-point-p)]
-   [("n" "       Next section" agent-shell-cockpit-next)
-    ("p" "       Previous section" agent-shell-cockpit-previous)]])
+			 "Invoke a Cockpit archive command from the available commands."
+			 ["Archive commands"
+			  [("R" "Restore workspace" agent-shell-cockpit-archive-view-restore)
+			   ("D" "Permanently delete workspace" agent-shell-cockpit-archive-view-delete
+			    :inapt-if-not agent-shell-cockpit-archive-view--workspace-at-point-p)
+			   ("b" "Return to dashboard" agent-shell-cockpit-archive-view-back)]]
+			 ["Essential commands"
+			  [("r" "Refresh" agent-shell-cockpit-refresh)
+			   ("q" "Return / bury buffer" agent-shell-cockpit-quit)
+			   ("TAB" "Toggle section" agent-shell-cockpit-toggle-section)
+			   ("RET" "Visit thing at point" agent-shell-cockpit-open)]
+			  [("n" "Next section" agent-shell-cockpit-next)
+			   ("p" "Previous section" agent-shell-cockpit-previous)
+			   ("M-<" "First section" agent-shell-cockpit-first)
+			   ("M->" "Last section" agent-shell-cockpit-last)]
+			  [("<down>" "Next section" agent-shell-cockpit-next)
+			   ("<up>" "Previous section" agent-shell-cockpit-previous)
+			   ("C-n" "Next line" next-line)
+			   ("C-p" "Previous line" previous-line)]
+			  [("j" "Next section (Evil)" agent-shell-cockpit-next
+			    :if (lambda () (bound-and-true-p evil-local-mode)))
+			   ("k" "Previous section (Evil)" agent-shell-cockpit-previous
+			    :if (lambda () (bound-and-true-p evil-local-mode)))]]
+			 [:hide (lambda () t)
+				("<tab>" "Toggle section" agent-shell-cockpit-toggle-section)
+				("<return>" "Visit thing at point" agent-shell-cockpit-open)])
 
 (defvar-keymap agent-shell-cockpit-archive-view-mode-map
   :parent agent-shell-cockpit-ui-mode-map

@@ -1,0 +1,2 @@
+(agent-shell-cockpit :fetcher github :repo "to-bak/agent-shell-cockpit"
+                     :files (:defaults "LICENSE" "README.org"))

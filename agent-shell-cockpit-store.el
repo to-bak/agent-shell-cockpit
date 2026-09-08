@@ -13,7 +13,6 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'org-id)
 (require 'json)
 (require 'map)
 (require 'seq)
@@ -107,9 +106,12 @@ When nil, use a .archive directory below
           (error "Duplicate session setting"))
         (push (map-elt entry 'id) seen)))
     (agent-shell-cockpit-store-set session 'settings (append settings nil)))
-  (when (and (map-elt session 'title)
-             (not (stringp (map-elt session 'title))))
-    (error "Invalid session title")))
+  (dolist (key '(title cwd displayId))
+    (when (and (map-elt session key) (not (stringp (map-elt session key))))
+      (error "Invalid session %s" key)))
+  (when-let* ((cwd (map-elt session 'cwd)))
+    (when (or (file-name-absolute-p cwd) (member ".." (split-string cwd "/" t)))
+      (error "Session directory must be relative and contained"))))
 
 (defun agent-shell-cockpit-store--validate (record root)
   "Validate RECORD loaded from workspace ROOT and return it."
@@ -124,8 +126,22 @@ When nil, use a .archive directory below
   (when (and (map-elt record 'archivedAt)
              (not (numberp (map-elt record 'archivedAt))))
     (error "Invalid archive timestamp"))
-  (mapc #'agent-shell-cockpit-store--validate-session
-        (map-elt record 'sessions))
+  (let (seen)
+    (dolist (session (map-elt record 'sessions))
+      (agent-shell-cockpit-store--validate-session session)
+      (let ((key (cons (map-elt session 'agentId) (map-elt session 'sessionId))))
+        (when (member key seen) (error "Duplicate session identity"))
+        (push key seen))))
+  (when-let* ((operation (map-elt record 'operation)))
+    (unless (and (listp operation)
+                 (member (map-elt operation 'type) '("archive" "restore"))
+                 (integerp (map-elt operation 'pid)) (> (map-elt operation 'pid) 0))
+      (error "Invalid lifecycle operation"))
+    (dolist (key '(destination host))
+      (agent-shell-cockpit-store--required-string operation key))
+    (unless (and (file-name-absolute-p (map-elt operation 'destination))
+                 (not (file-remote-p (map-elt operation 'destination))))
+      (error "Invalid lifecycle destination")))
   (setq root (file-name-as-directory (expand-file-name root)))
   (let* ((archived (agent-shell-cockpit-store--archived-root-p root))
          (name
@@ -144,10 +160,29 @@ When nil, use a .archive directory below
         (error "Invalid %s collection" key)))
     (dolist (key '(id name displayTitle worktreeDirectory))
       (agent-shell-cockpit-store--required-string record key))
-    (dolist (entry (map-elt record 'worktrees))
-      (agent-shell-cockpit-store--required-string entry 'name)
-      (unless (string-match-p "\\`[[:alnum:]][[:alnum:]_.-]*\\'" (map-elt entry 'name))
-        (error "Invalid repository name")))
+    (let (seen)
+      (dolist (entry (map-elt record 'worktrees))
+        (agent-shell-cockpit-store--required-string entry 'name)
+        (let ((name (map-elt entry 'name)))
+          (unless (string-match-p "\\`[[:alnum:]][[:alnum:]_.-]*\\'" name)
+            (error "Invalid repository name"))
+          (when (member name seen) (error "Duplicate repository name"))
+          (push name seen))
+        (dolist (key '(source head branch base retention))
+          (when (and (map-elt entry key) (not (stringp (map-elt entry key))))
+            (error "Invalid repository %s" key)))
+        (when-let* ((source (map-elt entry 'source)))
+          (unless (and (file-name-absolute-p source) (not (file-remote-p source)))
+            (error "Repository source must be an absolute local path")))
+        (dolist (key '(head base))
+          (when-let* ((value (map-elt entry key)))
+            (unless (string-match-p "\\`[[:xdigit:]]\\{40,64\\}\\'" value)
+              (error "Invalid repository commit"))))
+        (when-let* ((ref (map-elt entry 'retention)))
+          (unless (string-prefix-p "refs/cockpit/" ref)
+            (error "Invalid retention ref")))
+        (unless (member (map-elt entry 'removed) '(nil "yes" "pending"))
+          (error "Invalid repository removal state"))))
     (when-let* ((directory (map-elt record 'worktreeDirectory)))
       (unless (and (stringp directory)
                    (string-match-p "\\`[[:alnum:]][[:alnum:]_.-]*\\'" directory))
@@ -226,7 +261,11 @@ workspace records are included so the UI can report them."
                     (map-elt record 'sessions)))))
    (agent-shell-cockpit-store--fields
     record '(id name displayTitle archivedAt operation worktreeDirectory))
-   `((worktrees . ,(vconcat (map-elt record 'worktrees))))))
+   `((worktrees . ,(vconcat (mapcar
+                             (lambda (entry)
+                               (agent-shell-cockpit-store--fields
+                                entry '(name source head branch base retention removed)))
+                             (map-elt record 'worktrees)))))))
 
 (defvar agent-shell-cockpit-store--locked-path nil
   "Metadata path locked by the current synchronous update.")
@@ -243,8 +282,14 @@ A surviving lock after a crash requires explicit inspection and removal."
          (user-error "Workspace is locked: %s (inspect before removing)" lock)))
       (unwind-protect
           (let ((agent-shell-cockpit-store--locked-path path))
+            (with-temp-file (expand-file-name "owner" lock)
+              (insert (format "pid=%s\nhost=%s\nstarted=%s\n"
+                              (emacs-pid) (system-name) (current-time-string))))
             (funcall function))
-        (delete-directory lock)))))
+        (when (file-directory-p lock)
+          (when (file-exists-p (expand-file-name "owner" lock))
+            (delete-file (expand-file-name "owner" lock)))
+          (delete-directory lock))))))
 
 (defun agent-shell-cockpit-store--revision (path)
   "Return the content revision of PATH, or nil when missing."
@@ -273,10 +318,11 @@ Reject stale writes.  REPAIR explicitly permits replacing invalid metadata."
                            (expand-file-name ".workspace-" directory))))
            (unwind-protect
                (progn
-                 (with-temp-file temporary
-                   (insert (json-serialize
-                            (agent-shell-cockpit-store--serializable-record record)
-                            :null-object nil :false-object nil) "\n"))
+                 (let ((coding-system-for-write 'utf-8-unix))
+                   (with-temp-file temporary
+                     (insert (json-serialize
+                              (agent-shell-cockpit-store--serializable-record record)
+                              :null-object nil :false-object nil) "\n")))
                  (rename-file temporary path t)
                  (agent-shell-cockpit-store-set
                   record 'schemaVersion agent-shell-cockpit-store-schema-version)

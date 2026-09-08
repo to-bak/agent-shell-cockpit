@@ -18,9 +18,6 @@
 (require 'subr-x)
 (require 'agent-shell-cockpit-workspace)
 
-(declare-function agent-shell-cockpit-session-start-select "agent-shell-cockpit-session")
-(declare-function agent-shell-cockpit-session-start-target "agent-shell-cockpit-session")
-(declare-function agent-shell-cockpit-session-target "agent-shell-cockpit-session")
 (declare-function org-id-find-id-file "org-id")
 (declare-function org-id-goto "org-id")
 
@@ -41,13 +38,16 @@ The cockpit identifier is reserved for the workspace layout instruction."
   "Adapters registered with `agent-shell-cockpit-register-instruction-adapter'.")
 
 (cl-defun agent-shell-cockpit-register-instruction-adapter
-    (type &key reference bootstrap visit)
-  "Register TYPE with REFERENCE, optional BOOTSTRAP and VISIT callbacks.
+    (type &key reference bootstrap visit preview)
+  "Register TYPE with REFERENCE, optional BOOTSTRAP, VISIT and PREVIEW callbacks.
 REFERENCE receives (SOURCE WORKSPACE), where SOURCE is the complete source
 list and WORKSPACE is a record or nil.  It returns a nonempty reference string,
 never copied source contents.  BOOTSTRAP is nil, a string, or a function of
 WORKSPACE returning text or nil.  It is emitted once per selected adapter.
 VISIT optionally receives (SOURCE WORKSPACE) and opens the authoritative source.
+PREVIEW optionally receives (SOURCE WORKSPACE BUFFER), fills the temporary
+BUFFER with source content, selects its major mode and positions point.
+It must not display windows or modify source buffers.
 Re-registering replaces TYPE.  Callbacks are trusted Emacs configuration;
 the literal type is reserved."
   (unless (and type (symbolp type) (not (keywordp type)) (not (eq type 'literal)))
@@ -57,8 +57,10 @@ the literal type is reserved."
     (error "Adapter bootstrap must be text or a function"))
   (unless (or (null visit) (functionp visit))
     (error "Adapter visit must be a function"))
+  (unless (or (null preview) (functionp preview))
+    (error "Adapter preview must be a function"))
   (setf (alist-get type agent-shell-cockpit-instruction-adapters)
-        (list :reference reference :bootstrap bootstrap :visit visit))
+        (list :reference reference :bootstrap bootstrap :visit visit :preview preview))
   type)
 
 (defun agent-shell-cockpit-unregister-instruction-adapter (type)
@@ -163,15 +165,6 @@ When SINGLE is non-nil, choose one identifier for visiting."
                                         agent-shell-cockpit-default-instructions) ",")))))
         (mapcar (lambda (choice) (cdr (assoc choice table))) choices)))))
 
-(defun agent-shell-cockpit-instructions-launch (&optional workspace directory)
-  "Choose instructions and start an agent in WORKSPACE or standalone DIRECTORY."
-  (let ((text (agent-shell-cockpit-instructions-render
-               (agent-shell-cockpit-instructions-read workspace) workspace)))
-    (if workspace
-        (agent-shell-cockpit-session-start-select workspace text)
-      (agent-shell-cockpit-session-start-target
-       (agent-shell-cockpit-session-target (or directory default-directory)) text))))
-
 ;;;###autoload
 (defun agent-shell-cockpit-insert-instruction ()
   "Insert selected literals and instruction references at point, without sending."
@@ -223,14 +216,64 @@ When SINGLE is non-nil, choose one identifier for visiting."
   (agent-shell-cockpit-instructions--org-id source workspace)
   (org-id-goto (cadr source)))
 
+(defun agent-shell-cockpit-instructions-preview-file (file buffer &optional position)
+  "Copy FILE into preview BUFFER with its major mode, at POSITION.
+Use unsaved text from an existing visiting buffer when available.  No file-local
+variables are applied, and BUFFER does not become a visiting file buffer."
+  (let ((existing (find-buffer-visiting file)))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (if existing
+            (insert (with-current-buffer existing
+                      (save-restriction (widen) (buffer-substring-no-properties (point-min) (point-max)))))
+          (insert-file-contents file))
+        (setq default-directory (file-name-directory (expand-file-name file)))
+        (let ((buffer-file-name file)) (set-auto-mode))
+        (goto-char (min (point-max) (max (point-min) (or position 1))))))))
+
+(defun agent-shell-cockpit-instructions--preview-file (source workspace buffer)
+  "Preview the file SOURCE in WORKSPACE using BUFFER."
+  (agent-shell-cockpit-instructions-preview-file
+   (agent-shell-cockpit-instructions--file source workspace) buffer))
+
+(defun agent-shell-cockpit-instructions--preview-org-id (source workspace buffer)
+  "Preview the Org ID SOURCE in WORKSPACE using BUFFER."
+  (agent-shell-cockpit-instructions--org-id source workspace)
+  (agent-shell-cockpit-instructions-preview-file (org-id-find-id-file (cadr source)) buffer)
+  (with-current-buffer buffer
+    (when (re-search-forward (concat "^[ \t]*:ID:[ \t]+" (regexp-quote (cadr source)) "[ \t]*$") nil t)
+      (beginning-of-line))))
+
+(defun agent-shell-cockpit-instructions-preview (id workspace buffer)
+  "Preview instruction ID's source for WORKSPACE in temporary BUFFER.
+Adapter previews never affect the text produced for an agent."
+  (let* ((entry (or (assq id (agent-shell-cockpit-instructions--catalog workspace))
+                    (user-error "Unknown instruction: %s" id)))
+         (source (plist-get (cdr entry) :source)))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (fundamental-mode)
+        (erase-buffer)
+        (if (eq (car source) 'literal)
+            (progn (insert (agent-shell-cockpit-instructions--text (cadr source))) (text-mode) (goto-char (point-min)))
+          (let ((preview (plist-get (agent-shell-cockpit-instructions--adapter (car source)) :preview)))
+            (unless preview (user-error "Adapter %s has no source preview" (car source)))
+            (funcall preview source workspace buffer)))
+        (font-lock-ensure)
+        (setq buffer-read-only t)
+        (set-buffer-modified-p nil)))))
+
 (agent-shell-cockpit-register-instruction-adapter
  'file :reference #'agent-shell-cockpit-instructions--file
- :visit #'agent-shell-cockpit-instructions--visit-file)
+ :visit #'agent-shell-cockpit-instructions--visit-file
+ :preview #'agent-shell-cockpit-instructions--preview-file)
 
 (agent-shell-cockpit-register-instruction-adapter
  'org-id :reference #'agent-shell-cockpit-instructions--org-id
  :bootstrap "Resolve the selected Org ID by its exact :ID: property in the indicated file. Read its containing entry (or the whole file for a file-level ID). Follow relevant links; do not modify instruction sources unless explicitly asked."
- :visit #'agent-shell-cockpit-instructions--visit-org-id)
+ :visit #'agent-shell-cockpit-instructions--visit-org-id
+ :preview #'agent-shell-cockpit-instructions--preview-org-id)
 
 (provide 'agent-shell-cockpit-instructions)
 ;;; agent-shell-cockpit-instructions.el ends here

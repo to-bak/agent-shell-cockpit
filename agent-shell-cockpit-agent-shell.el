@@ -7,13 +7,12 @@
 
 ;;; Commentary:
 
-;; Compatibility boundary for native state, permission controls and input.
+;; Native state and command boundary for sessions and agent controls.
 
 ;;; Code:
 
 (require 'agent-shell)
 (require 'cl-lib)
-(require 'comint)
 (require 'map)
 (require 'seq)
 (require 'subr-x)
@@ -37,41 +36,37 @@
                     (point-max))))
         permission-position))))
 
-(defun agent-shell-cockpit-agent-shell-permission-action-available-p (buffer key)
-  "Return non-nil when BUFFER's latest permission row handles KEY."
-  (when-let* ((position
-               (agent-shell-cockpit-agent-shell-permission-position buffer)))
-    (with-current-buffer buffer
-      (save-excursion
-        (goto-char position)
-        (commandp (lookup-key (get-text-property (point) 'keymap) (kbd key)))))))
-
-(defun agent-shell-cockpit-agent-shell-permission-action (buffer key)
-  "Invoke KEY from BUFFER's latest native agent-shell permission row."
-  (unless (buffer-live-p buffer)
-    (user-error "Agent buffer is no longer live"))
-  (with-current-buffer buffer
-    (save-excursion
-      (let ((position
-             (agent-shell-cockpit-agent-shell-permission-position buffer)))
-        (unless position
-          (user-error "Agent has no pending permission request"))
-        (goto-char position)
-        (let ((command (lookup-key (get-text-property (point) 'keymap) (kbd key))))
-          (unless (commandp command)
-            (user-error "Permission action is unavailable: %s" key))
-          (call-interactively command))))))
-
-(defun agent-shell-cockpit-agent-shell-allow-once (buffer)
-  "Allow the latest pending permission request in agent BUFFER once."
-  (agent-shell-cockpit-agent-shell-permission-action buffer "y"))
-
 (defun agent-shell-cockpit-agent-shell-state-value (path)
-  "Return agent-shell's private state value at PATH.
-All compatibility-sensitive state access is isolated in this function."
+  "Return agent-shell's private state value at PATH."
   (when (boundp 'agent-shell--state)
     (map-nested-elt agent-shell--state path)))
 
+
+(defun agent-shell-cockpit-agent-shell-ready-p ()
+  "Return non-nil when a session exists and native initialization has settled.
+Inspect in-flight requests without reevaluating user configuration functions."
+  (and (agent-shell-cockpit-agent-shell-state-value '(:initialized))
+       (agent-shell-cockpit-agent-shell-state-value '(:session :id))
+       (not (seq-some
+             (lambda (request)
+               (member (map-elt request :method)
+                       '("initialize" "authenticate" "session/new" "session/load"
+                         "session/resume" "session/fork")))
+             (agent-shell-cockpit-agent-shell-state-value '(:active-requests))))
+       (not (agent-shell-cockpit-agent-shell-configuration-pending-p))))
+
+(defun agent-shell-cockpit-agent-shell-configuration-pending-p ()
+  "Return non-nil while a native setting request awaits its response."
+  (seq-some (lambda (request)
+              (member (map-elt request :method)
+                      '("session/set_config_option" "session/set_mode" "session/set_model")))
+            (agent-shell-cockpit-agent-shell-state-value '(:active-requests))))
+
+(defun agent-shell-cockpit-agent-shell-set-resume-config (settings)
+  "Prepare the current native buffer's configuration for restarting SETTINGS."
+  (setf (map-elt agent-shell--state :agent-config)
+        (agent-shell-cockpit-agent-shell-resume-config
+         (map-elt agent-shell--state :agent-config) settings)))
 
 (defun agent-shell-cockpit-agent-shell-config (identifier)
   "Return the native agent configuration named IDENTIFIER."
@@ -98,7 +93,7 @@ Include native model and mode IDs when no categorized option supplies them."
               (_ (push entry other)))))))
     (dolist (spec '(("model" :model-id) ("mode" :mode-id)))
       (when-let* ((value (agent-shell-cockpit-agent-shell-state-value
-                         (list :session (cadr spec))))
+                          (list :session (cadr spec))))
                   ((stringp value)) ((not (string-empty-p value))))
         (let ((entry `((id . ,(car spec)) (value . ,value))))
           (if (equal (car spec) "model")
