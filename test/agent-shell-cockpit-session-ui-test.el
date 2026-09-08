@@ -213,8 +213,11 @@
         (agent-shell-cockpit-workspace-view-refresh)
         (goto-char (point-max))
         (should (string-match-p "alpha" (agent-shell-cockpit-ui-header-context)))
-        (should (string-match-p (regexp-quote (map-elt workspace 'root))
-                                (agent-shell-cockpit-ui-header-context)))
+        ;; Temporary roots can be under HOME or long enough to be truncated.
+        (should (equal (agent-shell-cockpit-ui-one-line
+                        (format "alpha · %s"
+                                (abbreviate-file-name (map-elt workspace 'root))))
+                       (agent-shell-cockpit-ui-header-context)))
         (should (equal header-line-format agent-shell-cockpit-ui-header-line-format))))))
 
 (ert-deftest agent-shell-cockpit-dashboard-renders-workspace-and-unassigned ()
