@@ -160,6 +160,12 @@
          (agent-shell-cockpit-git-status root)
          (let ((process (plist-get (cdar agent-shell-cockpit-git--status-cache) :process)))
            (while (process-live-p process) (accept-process-output process 0.05)))
+         ;; Process exit and its sentinel are dispatched separately.  Wait for
+         ;; the sentinel to replace the pending cache entry before asserting.
+         (let ((deadline (+ (float-time) 1)))
+           (while (and (eq (agent-shell-cockpit-git-status root) 'pending)
+                       (< (float-time) deadline))
+             (accept-process-output nil 0.05)))
          (should (eq (agent-shell-cockpit-git-status root) 'clean)))))))
 (ert-deftest cockpit-safety-lifecycle-rejects-other-host-with-same-pid ()
   (cockpit-safety-root
