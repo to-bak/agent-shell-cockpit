@@ -3,6 +3,38 @@
 (require 'ert)
 (require 'agent-shell-cockpit)
 
+(ert-deftest cockpit-optional-evil-launch-checklist-and-workspace-switching ()
+  (require 'evil)
+  (let ((agent-shell-cockpit-refresh-interval nil))
+    (unwind-protect
+        (progn
+          (evil-mode 1)
+          (with-temp-buffer
+            (agent-shell-cockpit-launch-mode)
+            (evil-local-mode 1)
+            (evil-motion-state)
+            (dolist (binding '(("SPC" . agent-shell-cockpit-launch-toggle)
+                               ("RET" . agent-shell-cockpit-launch-inspect)
+                               ("M-<up>" . agent-shell-cockpit-launch-move-up)
+                               ("M-<down>" . agent-shell-cockpit-launch-move-down)
+                               ("M-k" . agent-shell-cockpit-launch-move-up)
+                               ("M-j" . agent-shell-cockpit-launch-move-down)
+                               ("s" . agent-shell-cockpit-launch-start)))
+              (should (eq (key-binding (kbd (car binding))) (cdr binding)))))
+          (with-temp-buffer
+            (agent-shell-cockpit-workspace-view-mode)
+            (evil-local-mode 1)
+            (evil-motion-state)
+            (should (eq (key-binding "b") #'agent-shell-cockpit-workspace-dispatch))
+            (should-not (eq (key-binding "W") #'agent-shell-cockpit-all-agents))
+            (unwind-protect
+                (progn
+                  (call-interactively (key-binding "b"))
+                  (should (eq (lookup-key transient--transient-map "b")
+                              #'agent-shell-cockpit-switch-workspace)))
+              (transient-quit-all))))
+      (evil-mode -1))))
+
 (ert-deftest cockpit-optional-evil-loaded-after-cockpit ()
   (require 'evil)
   (let ((agent-shell-cockpit-refresh-interval nil))
@@ -10,12 +42,12 @@
         (progn
           (evil-mode 1)
           (with-temp-buffer
-            (agent-shell-cockpit-mode)
+            (agent-shell-cockpit-agents-view-mode)
             (evil-local-mode 1)
             (evil-motion-state)
             (should (eq (key-binding (kbd "S")) #'agent-shell-cockpit-start-agent))
             (should (eq (key-binding (kbd "s")) #'agent-shell-cockpit-start-agent)))
-          (dolist (mode '(agent-shell-cockpit-mode agent-shell-cockpit-workspace-view-mode))
+          (dolist (mode '(agent-shell-cockpit-agents-view-mode agent-shell-cockpit-workspace-view-mode))
             (with-temp-buffer
               (funcall mode)
               (evil-local-mode 1)
@@ -51,7 +83,7 @@
     (unwind-protect
         (progn
           (evil-mode 1)
-          (dolist (mode '(agent-shell-cockpit-mode agent-shell-cockpit-workspace-view-mode
+          (dolist (mode '(agent-shell-cockpit-agents-view-mode agent-shell-cockpit-workspace-view-mode
                           agent-shell-cockpit-archive-view-mode))
             (with-temp-buffer
               (funcall mode)

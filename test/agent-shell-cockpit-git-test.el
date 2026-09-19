@@ -83,7 +83,7 @@
       (should (equal (agent-shell-cockpit-git-default-starting-point source)
                      current)))))
 
-(ert-deftest agent-shell-cockpit-git-supports-existing-branch-and-rejects-duplicate ()
+(ert-deftest agent-shell-cockpit-git-supports-multiple-checkouts-of-one-repository ()
   (agent-shell-cockpit-test-with-root
     (let* ((source (agent-shell-cockpit-test-make-repository
                     (expand-file-name "source" test-root)))
@@ -98,11 +98,14 @@
         (should (equal (agent-shell-cockpit-test-git
                         worktree "branch" "--show-current")
                        "existing"))
+        (should
+         (agent-shell-cockpit-git-add-worktree
+          :workspace workspace :source source :name "duplicate"
+          :mode 'detached :ref "HEAD"))
         (should-error
          (agent-shell-cockpit-git-add-worktree
           :workspace workspace :source source :name "duplicate"
-          :mode 'detached :ref "HEAD")
-         :type 'user-error)))))
+          :mode 'detached :ref "HEAD") :type 'user-error)))))
 
 (ert-deftest agent-shell-cockpit-archive-removes-clean-worktrees ()
   (agent-shell-cockpit-test-with-root

@@ -82,24 +82,24 @@
            (workspace (agent-shell-cockpit-workspace-create :name "alpha"))
            (origin (generate-new-buffer " *before cockpit*"))
            (agent (generate-new-buffer " *logical history agent*"))
-           dashboard workspace-buffer)
+           agents-view workspace-buffer)
       (unwind-protect
           (save-window-excursion
             (switch-to-buffer origin)
-            (agent-shell-cockpit)
-            (setq dashboard (current-buffer))
+            (agent-shell-cockpit-all-agents)
+            (setq agents-view (current-buffer))
             (agent-shell-cockpit-workspace-view workspace)
             (setq workspace-buffer (current-buffer))
             (agent-shell-cockpit-session-visit agent)
             (agent-shell-cockpit-session-return)
             (should (eq (current-buffer) workspace-buffer))
             (agent-shell-cockpit-quit)
-            (should (eq (current-buffer) dashboard))
+            (should (eq (current-buffer) agents-view))
             (agent-shell-cockpit-quit)
             (should (eq (current-buffer) origin)))
-        (dolist (buffer (list origin agent dashboard workspace-buffer))
+        (dolist (buffer (list origin agent agents-view workspace-buffer))
           (when (buffer-live-p buffer) (kill-buffer buffer)))
-        (setq agent-shell-cockpit--buffer nil)))))
+        (setq agent-shell-cockpit-agents-view--buffer nil)))))
 
 (ert-deftest agent-shell-cockpit-session-resumes-with-stored-agent-and-id ()
   (agent-shell-cockpit-test-with-root
@@ -220,7 +220,7 @@
                        (agent-shell-cockpit-ui-header-context)))
         (should (equal header-line-format agent-shell-cockpit-ui-header-line-format))))))
 
-(ert-deftest agent-shell-cockpit-dashboard-renders-workspace-and-unassigned ()
+(ert-deftest agent-shell-cockpit-agents-view-renders-assigned-and-unassigned-only ()
   (agent-shell-cockpit-test-with-root
     (let* ((alpha (agent-shell-cockpit-workspace-create
                    :name "alpha"))
@@ -246,24 +246,23 @@
                       (:session . ((:id . "unassigned-1")
                                    (:title . "Unassigned task"))))))
             (with-temp-buffer
-              (agent-shell-cockpit-mode)
+              (agent-shell-cockpit-agents-view-mode)
               (let ((inhibit-read-only t))
-                (agent-shell-cockpit-dashboard--render))
+                (agent-shell-cockpit-agents-view--render))
               (let* ((text (buffer-string))
-                     (alpha-position (string-match "^alpha" text))
                      (agent-position (string-match "Assigned task" text))
-                     (beta-position (string-match "^Beta" text))
                      (unassigned-position
                       (string-match "Unassigned task" text)))
-                (should alpha-position)
-                (should (< agent-position alpha-position beta-position))
-                (should (< unassigned-position alpha-position))
+                (should agent-position)
+                (should unassigned-position)
+                (should (string-match-p "alpha" text))
+                (should-not (string-match-p (regexp-opt '("beta" "Workspaces (")) text))
                 (should (= (apply #'+
                                   (mapcar
                                    (lambda (section)
                                      (length (oref section children)))
                                    (oref magit-root-section children)))
-                           4))
+                           2))
                 (goto-char (1+ agent-position))
                 (should (eq (agent-shell-cockpit-ui-object-type-at-point)
                             'workspace-session)))))
@@ -278,14 +277,14 @@
                  (lambda (&rest _)
                    (setq read-count (1+ read-count))
                    "alpha"))
-                ((symbol-function 'agent-shell-cockpit-dashboard-refresh)
+                ((symbol-function 'agent-shell-cockpit-agents-view-refresh)
                  #'ignore)
-                ((symbol-function 'dired-other-window)
-                 (lambda (directory) (setq opened directory))))
+                ((symbol-function 'agent-shell-cockpit-workspace-view)
+                 (lambda (workspace) (setq opened (map-elt workspace 'root)))))
         (agent-shell-cockpit-create-workspace))
       (should (= read-count 1))
       (should (equal opened
-                     (expand-file-name "alpha/context/"
+                     (expand-file-name "alpha/"
                                        agent-shell-cockpit-workspace-directory)))
       (should (equal
                (map-elt (agent-shell-cockpit-store-read
@@ -341,41 +340,38 @@
     (should (equal (agent-shell-cockpit-workspace-view--source-directory)
                    "/tmp/source/"))))
 
-(ert-deftest agent-shell-cockpit-dashboard-groups-collapse-but-rows-are-flat ()
+(ert-deftest agent-shell-cockpit-agents-view-preserves-group-collapse ()
   (agent-shell-cockpit-test-with-root
     (agent-shell-cockpit-workspace-create :name "alpha")
     (with-temp-buffer
-      (agent-shell-cockpit-mode)
-      (agent-shell-cockpit-dashboard-refresh)
-      (let* ((workspaces (cadr (oref magit-root-section children)))
-             (workspace (car (oref workspaces children))))
-        (should (oref workspaces content))
-        (should-not (oref workspace content))
-        (goto-char (oref workspaces start))
+      (agent-shell-cockpit-agents-view-mode)
+      (agent-shell-cockpit-agents-view-refresh)
+      (let ((agents (car (oref magit-root-section children))))
+        (should (oref agents content))
+        (goto-char (oref agents start))
         (agent-shell-cockpit-toggle-section)
-        (should (oref workspaces hidden))
-        (agent-shell-cockpit-dashboard-refresh)
-        (setq workspaces (cadr (oref magit-root-section children)))
-        (should (oref workspaces hidden))))))
+        (should (oref agents hidden))
+        (agent-shell-cockpit-agents-view-refresh)
+        (setq agents (car (oref magit-root-section children)))
+        (should (oref agents hidden))))))
 
-(ert-deftest agent-shell-cockpit-dashboard-workspace-summary-uses-icons ()
+(ert-deftest agent-shell-cockpit-agents-view-empty-has-no-workspace-list ()
   (agent-shell-cockpit-test-with-root
-    (let ((workspace (agent-shell-cockpit-workspace-create
-                      :name "alpha")))
-      (cl-letf (((symbol-function 'agent-shell-cockpit-ui-icon)
-                 (lambda (kind) (format "[%s]" kind))))
-        (should
-         (equal (substring-no-properties
-                 (agent-shell-cockpit-dashboard--workspace-summary workspace))
-                "0 [agent]  0 [context]  0 [repository]"))))))
+    (agent-shell-cockpit-workspace-create :name "alpha")
+    (with-temp-buffer
+      (agent-shell-cockpit-agents-view-mode)
+      (agent-shell-cockpit-agents-view-refresh)
+      (should (string-match-p "No live agents" (buffer-string)))
+      (should-not (string-match-p (regexp-opt '("alpha" "Workspaces (")) (buffer-string)))
+      (should (equal (agent-shell-cockpit-ui-header-context) "All agents")))))
 
 (ert-deftest agent-shell-cockpit-archives-open-in-history-buffer ()
   (agent-shell-cockpit-test-with-root
     (agent-shell-cockpit-workspace-archive
      (agent-shell-cockpit-workspace-create :name "alpha"))
     (with-temp-buffer
-      (agent-shell-cockpit-mode)
-      (agent-shell-cockpit-dashboard-refresh)
+      (agent-shell-cockpit-agents-view-mode)
+      (agent-shell-cockpit-agents-view-refresh)
       (should-not (string-match-p "Archived workspaces" (buffer-string)))
       (agent-shell-cockpit-archive-view-mode)
       (agent-shell-cockpit-archive-view-refresh)
@@ -408,7 +404,7 @@
         (should (string-match-p "No archived workspaces"
                                 (buffer-string)))))))
 
-(ert-deftest agent-shell-cockpit-dashboard-context-predicates-accept-agent-row ()
+(ert-deftest agent-shell-cockpit-agents-view-predicates-accept-agent-row ()
   (agent-shell-cockpit-test-with-root
     (let* ((agent (generate-new-buffer " *predicate agent*"))
            (agent-shell-cockpit-test--buffers (list agent)))
@@ -421,15 +417,14 @@
                       (:session . ((:id . "predicate-1")
                                    (:title . "Predicate task"))))))
             (with-temp-buffer
-              (agent-shell-cockpit-mode)
-              (agent-shell-cockpit-dashboard-refresh)
+              (agent-shell-cockpit-agents-view-mode)
+              (agent-shell-cockpit-agents-view-refresh)
               (goto-char (point-min))
               (search-forward "Predicate task")
               (should (eq (agent-shell-cockpit-ui-object-at-point) agent))
-              (should-not
-               (agent-shell-cockpit-dashboard--invalid-at-point-p))
+              (should (eq (agent-shell-cockpit-ui-object-type-at-point) 'session))
               (should
-               (agent-shell-cockpit-dashboard--live-agent-at-point-p))))
+               (agent-shell-cockpit-agent-live-at-point-p))))
         (when (buffer-live-p agent) (kill-buffer agent))))))
 
 (ert-deftest agent-shell-cockpit-workspace-detail-renders-worktrees-and-history ()
@@ -578,7 +573,7 @@
               (let ((text (buffer-string)))
                 (should (string-match-p "First line Second line Third" text))
                 (should-not (string-match-p "^Second line" text)))
-              (let* ((agents (car (oref magit-root-section children)))
+              (let* ((agents (cadr (oref magit-root-section children)))
                      (section (car (oref agents children))))
                 (should (oref agents content))
                 (should (oref section content))
@@ -604,7 +599,7 @@
         (setq agent-shell-cockpit-workspace-view--root
               (map-elt workspace 'root))
         (agent-shell-cockpit-workspace-view-refresh)
-        (let* ((contexts (cadr (oref magit-root-section children)))
+        (let* ((contexts (caddr (oref magit-root-section children)))
                (section (car (oref contexts children))))
           (should (oref section hidden))
           (should-not (string-match-p "Inline context body" (buffer-string)))
@@ -640,7 +635,7 @@
         (setq agent-shell-cockpit-workspace-view--root
               (map-elt workspace 'root))
         (agent-shell-cockpit-workspace-view-refresh)
-        (let* ((contexts (cadr (oref magit-root-section children)))
+        (let* ((contexts (caddr (oref magit-root-section children)))
                (context (car (oref contexts children))))
           (should (oref contexts content))
           (should (oref context hidden))
@@ -671,7 +666,7 @@
     (should (= (agent-shell-cockpit-ui-object-at-point) 2))))
 
 (ert-deftest agent-shell-cockpit-keeps-evil-motion-keys-free ()
-  (dolist (map (list agent-shell-cockpit-mode-map
+  (dolist (map (list agent-shell-cockpit-agents-view-mode-map
                      agent-shell-cockpit-workspace-view-mode-map
                      agent-shell-cockpit-archive-view-mode-map))
     (dolist (key '("h" "j" "k" "l"))
@@ -681,14 +676,14 @@
                agent-shell-cockpit-previous))))))
 
 (ert-deftest agent-shell-cockpit-binds-transient-dispatch ()
-  (dolist (map (list agent-shell-cockpit-mode-map
+  (dolist (map (list agent-shell-cockpit-agents-view-mode-map
                      agent-shell-cockpit-workspace-view-mode-map
                      agent-shell-cockpit-archive-view-mode-map))
     (should (eq (lookup-key map (kbd "?"))
                 'agent-shell-cockpit-dispatch))))
 
 (ert-deftest agent-shell-cockpit-installs-branded-header-line ()
-  (dolist (mode '(agent-shell-cockpit-mode
+  (dolist (mode '(agent-shell-cockpit-agents-view-mode
                   agent-shell-cockpit-workspace-view-mode
                   agent-shell-cockpit-archive-view-mode))
     (with-temp-buffer
@@ -697,7 +692,7 @@
                      agent-shell-cockpit-ui-header-line-format)))))
 
 (ert-deftest agent-shell-cockpit-provides-magit-style-keymap ()
-  (dolist (map (list agent-shell-cockpit-mode-map
+  (dolist (map (list agent-shell-cockpit-agents-view-mode-map
                      agent-shell-cockpit-workspace-view-mode-map
                      agent-shell-cockpit-archive-view-mode-map))
     (dolist (binding '(("TAB" . agent-shell-cockpit-toggle-section)
@@ -708,7 +703,7 @@
                        ("<up>" . agent-shell-cockpit-previous)))
       (should (eq (lookup-key map (kbd (car binding))) (cdr binding)))))
   (should (eq (lookup-key agent-shell-cockpit-workspace-view-mode-map (kbd "b"))
-              'agent-shell-cockpit-workspace-view-back))
+              'agent-shell-cockpit-workspace-dispatch))
   (should (eq (lookup-key agent-shell-cockpit-workspace-view-mode-map (kbd "a"))
               'agent-shell-cockpit-agent-actions))
   (should (eq (lookup-key agent-shell-cockpit-workspace-view-mode-map (kbd "x"))
@@ -716,11 +711,11 @@
   (should-not
    (eq (lookup-key agent-shell-cockpit-workspace-view-mode-map (kbd "y"))
        'agent-shell-cockpit-agent-permission-allow-once))
-  (should (eq (lookup-key agent-shell-cockpit-mode-map (kbd "l"))
-              'agent-shell-cockpit-archive-dispatch))
+  (should (eq (lookup-key agent-shell-cockpit-agents-view-mode-map (kbd "l"))
+              'agent-shell-cockpit-archives))
   (should (eq (lookup-key agent-shell-cockpit-archive-view-mode-map (kbd "D"))
               'agent-shell-cockpit-archive-view-delete))
-  (dolist (map (list agent-shell-cockpit-mode-map
+  (dolist (map (list agent-shell-cockpit-agents-view-mode-map
                      agent-shell-cockpit-workspace-view-mode-map
                      agent-shell-cockpit-archive-view-mode-map))
     (dolist (key '("<backtab>" "C-c TAB" "C-<tab>" "M-<tab>"))
@@ -771,8 +766,8 @@
             (delete-other-windows cockpit-window)
             (set-window-buffer cockpit-window cockpit)
             (with-current-buffer cockpit
-              (agent-shell-cockpit-mode)
-              (agent-shell-cockpit-dashboard-refresh)
+              (agent-shell-cockpit-agents-view-mode)
+              (agent-shell-cockpit-agents-view-refresh)
               (set-window-point cockpit-window (+ (point) 5)))
             (let ((other-window (split-window cockpit-window nil 'right)))
               (set-window-buffer other-window other)
@@ -780,7 +775,7 @@
               (with-current-buffer cockpit
                 ;; An unselected window has a separate `window-point'.
                 (goto-char (point-max))
-                (agent-shell-cockpit-dashboard-refresh))
+                (agent-shell-cockpit-agents-view-refresh))
               (with-current-buffer cockpit
                 (should (< (window-point cockpit-window) (point-max)))
                 (should (magit-section-at (window-point cockpit-window)))

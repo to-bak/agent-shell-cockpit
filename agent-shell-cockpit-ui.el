@@ -26,11 +26,6 @@
 (declare-function agent-shell-cockpit-agent-preview-close
                   "agent-shell-cockpit-agent")
 
-(defcustom agent-shell-cockpit-buffer-name "*Agent Shell Cockpit*"
-  "Name of the cockpit dashboard buffer."
-  :type 'string
-  :group 'agent-shell-cockpit)
-
 (defcustom agent-shell-cockpit-refresh-interval 2
   "Seconds between visible cockpit refreshes, or nil to disable."
   :type '(choice (const :tag "Disabled" nil) number)
@@ -67,6 +62,15 @@
      :foreground "#9a6700" :weight semi-bold)
     (t :inherit warning))
   "Face for working items."
+  :group 'agent-shell-cockpit)
+
+(defface agent-shell-cockpit-other-agents-attention
+  '((((class color) (background dark))
+     :background "#44282b" :foreground "#e6aaaa" :weight bold :extend t)
+    (((class color) (background light))
+     :background "#f8dddd" :foreground "#8f3434" :weight bold :extend t)
+    (t :inherit warning))
+  "Muted red heading for agents elsewhere that need attention."
   :group 'agent-shell-cockpit)
 
 (defface agent-shell-cockpit-status-ready
@@ -144,7 +148,9 @@
         (format "Workspace · %s"
                 (string-remove-prefix
                  "Cockpit: " (string-trim (buffer-name) "\\*+" "\\*+")))))
-   (t "Dashboard")))
+   ((derived-mode-p 'agent-shell-cockpit-agents-view-mode) "All agents")
+   ((derived-mode-p 'agent-shell-cockpit-launch-mode) "Prepare agent")
+   (t "Cockpit")))
 
 (defun agent-shell-cockpit-ui-insert-header (label value)
   "Insert a Magit-style header line with LABEL and VALUE."

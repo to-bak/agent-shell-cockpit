@@ -19,6 +19,7 @@
 (require 'agent-shell-cockpit-session)
 (require 'agent-shell-cockpit-ui)
 (require 'agent-shell-cockpit-instructions)
+(require 'agent-shell-cockpit-launch)
 
 (declare-function agent-shell-cockpit-refresh "agent-shell-cockpit-ui")
 
@@ -65,18 +66,23 @@
   "Agent currently previewed from the current Cockpit buffer.")
 
 (defun agent-shell-cockpit-agent-launch (&optional workspace directory)
-  "Choose instructions and start an agent in WORKSPACE or standalone DIRECTORY."
-  (let ((text (agent-shell-cockpit-instructions-render
-               (agent-shell-cockpit-instructions-read workspace) workspace)))
-    (if workspace
-        (agent-shell-cockpit-session-start-select workspace text)
-      (agent-shell-cockpit-session-start-target
-       (agent-shell-cockpit-session-target (or directory default-directory)) text))))
+  "Prepare an agent in WORKSPACE or standalone DIRECTORY."
+  (agent-shell-cockpit-launch workspace directory))
 
 (defun agent-shell-cockpit-agent-live-at-point-p ()
   "Return non-nil when point is on a live agent row."
   (memq (agent-shell-cockpit-ui-object-type-at-point)
         '(session workspace-session live-session)))
+
+(defun agent-shell-cockpit-agent-sort-buffers (buffers)
+  "Return live agent BUFFERS with those needing attention first."
+  (sort (copy-sequence buffers)
+        (lambda (left right)
+          (let ((left-attention (eq (agent-shell-cockpit-session-status left) 'attention))
+                (right-attention (eq (agent-shell-cockpit-session-status right) 'attention)))
+            (if (eq left-attention right-attention)
+                (string-lessp (buffer-name left) (buffer-name right))
+              left-attention)))))
 
 (defun agent-shell-cockpit-agent-buffer-at-point ()
   "Return the live agent buffer at point or signal a user error."
@@ -159,6 +165,8 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
                              '((title . "standalone"))))))))
      (magit-insert-section-body
       (agent-shell-cockpit-ui-insert-detail "Agent" (or agent-id "unknown"))
+      (when-let* ((names (buffer-local-value 'agent-shell-cockpit-session-selected-worktrees buffer)))
+        (agent-shell-cockpit-ui-insert-detail "Worktrees" (string-join names ", ")))
       (when session-id
         (agent-shell-cockpit-ui-insert-detail "Session" session-id))
       (agent-shell-cockpit-ui-insert-detail
@@ -181,6 +189,8 @@ When SHOW-WORKSPACE is non-nil, include a workspace tag."
        'history name (or (map-elt session 'title) session-id)))
      (magit-insert-section-body
       (agent-shell-cockpit-ui-insert-detail "Agent" agent-id)
+      (when-let* ((names (map-elt session 'selectedWorktrees)))
+        (agent-shell-cockpit-ui-insert-detail "Worktrees" (string-join names ", ")))
       (agent-shell-cockpit-ui-insert-detail "Session" session-id)))))
 
 (defun agent-shell-cockpit-agent-preview-close ()

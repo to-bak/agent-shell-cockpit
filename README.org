@@ -42,31 +42,33 @@ Use =M-x customize-group RET agent-shell-cockpit= for settings.
 
 * Sample configuration
 #+begin_src emacs-lisp
-  (defun my-cockpit-fullscreen ()
-    "Open Cockpit full-screen, saving the current layout for later restoration."
-    (interactive)
-    (window-configuration-to-register ?c)
-    (delete-other-windows)
-    (agent-shell-cockpit))
-
   (use-package agent-shell-cockpit
     :straight (:type git :host github :repo "to-bak/agent-shell-cockpit")
     :after agent-shell
-    :commands agent-shell-cockpit
-    :bind ("C-c m" . my-cockpit-fullscreen)
+    :after agent-shell
+    :demand t
+    :bind (("C-c m" . agent-shell-cockpit))
     :custom
+    (agent-shell-cockpit-enable-standalone-sessions t)
     (agent-shell-cockpit-default-instructions '(cockpit))
     (agent-shell-cockpit-agent-preview-behavior 'delayed)
     (agent-shell-cockpit-context-directory-name "context")
     (agent-shell-cockpit-worktrees-directory-name "worktrees")
+
     ;; optional - requires magit
     (agent-shell-cockpit-worktree-open-function #'magit-status)
-    ;; optional - defaults to dired, but can integrate with whicever project framework you are using.
-    (agent-shell-cockpit-repository-source-function #'project-prompt-project-dir)
+    (agent-shell-cockpit-repository-source-function
+
+     ;; optional - defaults to dired, but can integrate with whicever project framework you are using.
+     #'project-prompt-project-dir)
     :config
-    ;; Optional: enable the Org-roam sources shown below.
+    ;; optional - sample reusable instruction using org-roam
     ;; (require 'agent-shell-cockpit-org-roam)
-    )
+    ;; (setq agent-shell-cockpit-instructions
+    ;;    '((manifest
+    ;;       :title "General AI Instructions"
+    ;;       :source (org-roam "a8a767a1-1644-4c4a-a05f-23f7b3eab5bf"))))
+  )
 #+end_src
 
 * Everyday workflow
@@ -77,11 +79,10 @@ Use =M-x customize-group RET agent-shell-cockpit= for settings.
 4. Press =s= to start an agent shell; you will be prompted to toggle reusable instructions (see below) before proceeding.
 5. Your agent shell is now running; and can be previewed from the main dashboards.
 6. Interact with a running agent from the main dashboard, by pressing =a=. This allow you to approve, reject agent prompts etc.
-
 * Declarative reusable instructions
 
 Declare the catalog in Emacs configuration. Each instruction has a stable ID,
-a title, and a source. Only literals and references are supported:
+a title, and a source: literal text, a skill invocation, or a reference:
 
 #+begin_src emacs-lisp
 (setq agent-shell-cockpit-instructions
@@ -89,10 +90,14 @@ a title, and a source. Only literals and references are supported:
                  :source (literal "Keep your final response concise."))
         (review :title "Code review"
                 :source (file "~/instructions/review.md"))
+        (brief :title "Workspace brief"
+               :source (file "context/prompt.org"))
+        (design :title "Design skill"
+                :source (skill "design-review"))
         (manifest :title "AI Manifest"
                   :source (org-roam "f7315811-28de-49e2-baba-a109c0eaa6ba"))))
 
-(setq agent-shell-cockpit-default-instructions '(cockpit))
+(setq agent-shell-cockpit-default-instructions '(cockpit brief design concise))
 #+end_src
 
 NOTE: the org-roam instruction adapter is included in the plugin, but disabled by default.

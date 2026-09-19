@@ -50,7 +50,12 @@
         (insert "Existing prompt")
         (should-error (agent-shell-cockpit-insert-instruction) :type 'user-error)
         (should (equal (buffer-string) "Existing prompt")))
-      (should-error (agent-shell-cockpit-agent-launch) :type 'user-error)
+      (with-temp-buffer
+        (agent-shell-cockpit-launch-mode)
+        (setq agent-shell-cockpit-launch--items
+              (let ((agent-shell-cockpit-default-instructions '(a b)))
+                (agent-shell-cockpit-launch--initial-items nil)))
+        (should-error (agent-shell-cockpit-launch-start) :type 'user-error))
       (should-not launched))))
 
 (ert-deftest cockpit-instructions-picker-uses-stable-ids-and-defaults ()
@@ -105,12 +110,23 @@
   (agent-shell-cockpit-test-with-root
    (let* ((workspace (agent-shell-cockpit-workspace-create :name "alpha"))
           (agent-shell-cockpit-instructions '((brief :title "Brief" :source (literal "Be brief."))))
+          (agent-shell-cockpit-default-instructions '(brief))
           observed)
      (cl-letf (((symbol-function 'agent-shell-cockpit-instructions-read) (lambda (&rest _) '(brief)))
                ((symbol-function 'agent-shell-cockpit-session-start-select)
-                (lambda (target text) (should (equal target workspace)) (setq observed text))))
-       (agent-shell-cockpit-agent-launch workspace)
-       (should (equal observed "Be brief."))))))
+                (lambda (target text)
+                  (should (equal (map-elt target 'id) (map-elt workspace 'id)))
+                  (setq observed text) (current-buffer)))
+               ((symbol-function 'agent-shell-cockpit-session--upsert-current) #'ignore))
+       (save-window-excursion
+         (unwind-protect
+             (progn
+               (agent-shell-cockpit-agent-launch workspace)
+               (should-not observed)
+               (agent-shell-cockpit-launch-start)
+               (should (string-suffix-p "Be brief." observed)))
+           (when (derived-mode-p 'agent-shell-cockpit-launch-mode)
+             (kill-buffer (current-buffer)))))))))
 
 (provide 'agent-shell-cockpit-instructions-test)
 ;;; agent-shell-cockpit-instructions-test.el ends here

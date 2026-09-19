@@ -23,14 +23,14 @@
 
 (defcustom agent-shell-cockpit-instructions nil
   "Instruction catalog: (ID :title TITLE :source (TYPE ARG...)) entries.
-IDs are unique symbols.  Sources are literal or registered reference adapters.
+IDs are unique symbols.  Sources are literal, skill, or reference adapters.
 For example: (review :title \"Review\" :source (file \"~/review.md\")).
 The cockpit identifier is reserved for the workspace layout instruction."
   :type '(repeat sexp)
   :group 'agent-shell-cockpit)
 
 (defcustom agent-shell-cockpit-default-instructions nil
-  "Instruction identifiers initially selected when launching an agent."
+  "Instruction identifiers initially selected, in launch message order."
   :type '(repeat symbol)
   :group 'agent-shell-cockpit)
 
@@ -115,10 +115,13 @@ references before returning; failures do not produce partial agent input."
       (let* ((entry (or (assq id catalog) (user-error "Unknown instruction: %s" id)))
              (source (plist-get (cdr entry) :source))
              (type (car source)))
-        (if (eq type 'literal)
+        (if (memq type '(literal skill))
             (progn
-              (unless (= (length source) 2) (user-error "Literal expects one string"))
-              (push (agent-shell-cockpit-instructions--text (cadr source)) items))
+              (unless (= (length source) 2) (user-error "%s expects one string" type))
+              (push (if (eq type 'skill)
+                        (format "Use the %s skill."
+                                (agent-shell-cockpit-instructions--text (cadr source)))
+                      (agent-shell-cockpit-instructions--text (cadr source))) items))
           (let* ((adapter (agent-shell-cockpit-instructions--adapter type))
                  (reference (funcall (plist-get adapter :reference) source workspace)))
             (unless (memq type seen)
@@ -187,12 +190,12 @@ When SINGLE is non-nil, choose one identifier for visiting."
       (unless visit (user-error "This adapter does not support visiting"))
       (funcall visit source nil))))
 
-(defun agent-shell-cockpit-instructions--file (source _workspace)
-  "Return the absolute file reference described by SOURCE."
+(defun agent-shell-cockpit-instructions--file (source workspace)
+  "Resolve SOURCE to a readable file, relative to WORKSPACE when supplied."
   (unless (and (= (length source) 2) (stringp (cadr source))
-               (file-name-absolute-p (cadr source)))
-    (user-error "File instructions require an absolute path (~/ is allowed)"))
-  (let ((path (expand-file-name (cadr source))))
+               (or workspace (file-name-absolute-p (cadr source))))
+    (user-error "Relative file instructions require a workspace"))
+  (let ((path (expand-file-name (cadr source) (map-elt workspace 'root))))
     (unless (and (file-regular-p path) (file-readable-p path))
       (user-error "Instruction file is missing or unreadable: %s" path))
     path))

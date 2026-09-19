@@ -30,8 +30,15 @@
 (require 'agent-shell-cockpit-ui)
 (require 'agent-shell-cockpit-workspace)
 
-(defvar agent-shell-cockpit--buffer)
-(declare-function agent-shell-cockpit "agent-shell-cockpit-dashboard")
+(defvar agent-shell-cockpit-agents-view--buffer)
+(defvar agent-shell-cockpit-recent-workspaces)
+(declare-function agent-shell-cockpit-all-agents "agent-shell-cockpit-agents-view")
+(declare-function agent-shell-cockpit-agents-view-workspace "agent-shell-cockpit-agents-view")
+(declare-function agent-shell-cockpit "agent-shell-cockpit")
+(declare-function agent-shell-cockpit-workspace-dispatch "agent-shell-cockpit-navigation")
+(declare-function agent-shell-cockpit-create-workspace "agent-shell-cockpit-navigation")
+(declare-function agent-shell-cockpit-repair-workspace "agent-shell-cockpit-navigation")
+(declare-function agent-shell-cockpit-archives "agent-shell-cockpit-archive-view")
 (defvar-local agent-shell-cockpit-workspace-view--root nil
   "Workspace root displayed in the current detail buffer.")
 
@@ -53,7 +60,8 @@ The function is called without arguments and must return a directory."
   :group 'agent-shell-cockpit)
 
 (defcustom agent-shell-cockpit-workspace-sections-hook
-  '(agent-shell-cockpit-workspace-insert-agents
+  '(agent-shell-cockpit-workspace-insert-other-agents
+    agent-shell-cockpit-workspace-insert-agents
     agent-shell-cockpit-workspace-insert-context
     agent-shell-cockpit-workspace-insert-worktrees)
   "Hook of functions that insert workspace detail sections.
@@ -212,6 +220,29 @@ outside the font-lock lifecycle of the cockpit buffer."
                    (map-elt session 'sessionId)))))
    (agent-shell-cockpit-session-live-buffers workspace)))
 
+(defun agent-shell-cockpit-workspace-insert-other-agents
+    (_workspace live-sessions _history _contexts _worktrees)
+  "Insert a collapsed overview of agents outside LIVE-SESSIONS."
+  (let* ((agents (agent-shell-cockpit-agent-sort-buffers
+                  (seq-remove (lambda (buffer) (memq buffer live-sessions))
+                              (seq-filter #'buffer-live-p (agent-shell-buffers)))))
+         (attention (seq-count (lambda (buffer)
+                                 (eq (agent-shell-cockpit-session-status buffer) 'attention)) agents)))
+    (magit-insert-section (agent-shell-cockpit-section 'other-agents t :kind 'group)
+      (magit-insert-heading
+       (propertize (format "Other agents · %d %s attention"
+                           attention (if (= attention 1) "needs" "need"))
+                   'font-lock-face (if (> attention 0) 'agent-shell-cockpit-other-agents-attention
+                                     'magit-section-heading)))
+      (magit-insert-section-body
+       (if agents
+           (dolist (buffer agents)
+             (agent-shell-cockpit-agent-insert-live
+              buffer (agent-shell-cockpit-session-workspace buffer) 'live-session t))
+         (insert (propertize "No agents in other workspaces or standalone sessions\n"
+                             'face 'agent-shell-cockpit-secondary)))
+       (insert ?\n)))))
+
 (defun agent-shell-cockpit-workspace-insert-agents
     (workspace live-sessions history _contexts _worktrees)
   "Insert WORKSPACE agent sections from LIVE-SESSIONS and HISTORY."
@@ -269,6 +300,9 @@ CONTEXTS is the list of context files to render."
             (agent-shell-cockpit-workspace-view--insert-row
              (concat (map-elt repository 'name)
                      (cond ((equal (map-elt workspace 'state) "archived") " · archived")
+                           ((map-elt repository 'restoreError)
+                            (propertize (concat " · recovery needed (R): " (map-elt repository 'restoreError))
+                                        'face 'warning))
                            ((not (file-directory-p path)) " · missing")
                            (t
                             (pcase (agent-shell-cockpit-git-status path)
@@ -414,13 +448,9 @@ CONTEXTS is the list of context files to render."
   "Archive the displayed workspace after confirmation."
   (interactive)
   (let ((workspace (agent-shell-cockpit-workspace-view--workspace)))
-    (when (yes-or-no-p (format "Archive workspace %s? "
-                               (map-elt workspace 'title)))
-      (agent-shell-cockpit-workspace-archive workspace)
+    (when (agent-shell-cockpit-workspace-archive-confirm workspace)
       (kill-buffer (current-buffer))
-      (when (buffer-live-p agent-shell-cockpit--buffer)
-        (switch-to-buffer agent-shell-cockpit--buffer)
-        (agent-shell-cockpit-refresh)))))
+      (agent-shell-cockpit-all-agents))))
 
 (defun agent-shell-cockpit-workspace-view-forget-session ()
   "Forget the historical session at point."
@@ -435,14 +465,6 @@ CONTEXTS is the list of context files to render."
          (agent-shell-cockpit-workspace-view-refresh))))
     (_ (user-error "Select a historical session"))))
 
-(defun agent-shell-cockpit-workspace-view-back ()
-  "Return to the cockpit dashboard."
-  (interactive)
-  (agent-shell-cockpit-agent-preview-close)
-  (if (buffer-live-p agent-shell-cockpit--buffer)
-      (switch-to-buffer agent-shell-cockpit--buffer)
-    (agent-shell-cockpit)))
-
 (defun agent-shell-cockpit-workspace-view--type-at-point-p (type)
   "Return non-nil when the Cockpit section at point has TYPE."
   (eq (agent-shell-cockpit-ui-object-type-at-point) type))
@@ -450,9 +472,7 @@ CONTEXTS is the list of context files to render."
 (transient-define-prefix agent-shell-cockpit-workspace-view-dispatch ()
                          "Invoke a Cockpit workspace command from the available commands."
                          ["Workspace and agent commands"
-                          [("R" "Continue interrupted operation" agent-shell-cockpit-workspace-view-recover
-                            :inapt-if-not (lambda ()
-					    (map-elt (agent-shell-cockpit-workspace-view--workspace) 'operation)))
+                          [("R" "Recover worktrees / operation" agent-shell-cockpit-workspace-view-recover)
                            ("s" "Start agent" agent-shell-cockpit-workspace-view-start-agent)
 			   ("S" "Start agent" agent-shell-cockpit-workspace-view-start-agent)
                            ("a" "Agent actions" agent-shell-cockpit-agent-actions
@@ -482,11 +502,15 @@ CONTEXTS is the list of context files to render."
                             (lambda ()
                               (agent-shell-cockpit-workspace-view--type-at-point-p 'repository)))
                            ("A" "Archive workspace" agent-shell-cockpit-workspace-view-archive)
-                           ("b" "Return to dashboard" agent-shell-cockpit-workspace-view-back)]]
+                           ("w" "Create workspace" agent-shell-cockpit-create-workspace)
+                           ("l" "Archived workspaces" agent-shell-cockpit-archives)
+                           ("E" "Repair invalid metadata" agent-shell-cockpit-repair-workspace)
+                           ("b" "Workspaces" agent-shell-cockpit-workspace-dispatch)]]
                          ["Instruction files"
                           ("I" "Visit instruction" agent-shell-cockpit-visit-instruction)
 			  ]
                          ["Agent navigation"
+                          ("o" "Visit agent's workspace" agent-shell-cockpit-agents-view-workspace)
 			  ("v" "Preview agent" agent-shell-cockpit-agent-preview)
 			  ("]" "Next attention" agent-shell-cockpit-next-attention)]
 			 ["Essential commands"
@@ -518,6 +542,7 @@ CONTEXTS is the list of context files to render."
   "s" #'agent-shell-cockpit-workspace-view-start-agent
   "S" #'agent-shell-cockpit-workspace-view-start-agent
   "a" #'agent-shell-cockpit-agent-actions
+  "o" #'agent-shell-cockpit-agents-view-workspace
   "x" #'agent-shell-cockpit-workspace-view-forget-session
   "K" #'agent-shell-cockpit-agent-kill
   "c" #'agent-shell-cockpit-workspace-view-add-context
@@ -528,7 +553,10 @@ CONTEXTS is the list of context files to render."
   "+" #'agent-shell-cockpit-add-worktree
   "-" #'agent-shell-cockpit-remove-worktree
   "A" #'agent-shell-cockpit-workspace-view-archive
-  "b" #'agent-shell-cockpit-workspace-view-back)
+  "b" #'agent-shell-cockpit-workspace-dispatch
+  "w" #'agent-shell-cockpit-create-workspace
+  "l" #'agent-shell-cockpit-archives
+  "E" #'agent-shell-cockpit-repair-workspace)
 
 (define-derived-mode agent-shell-cockpit-workspace-view-mode
   agent-shell-cockpit-ui-mode "Cockpit-Workspace"
@@ -558,6 +586,10 @@ CONTEXTS is the list of context files to render."
 
 (defun agent-shell-cockpit-workspace-view (workspace)
   "Open detail view for WORKSPACE."
+  (when (boundp 'agent-shell-cockpit-recent-workspaces)
+    (setq agent-shell-cockpit-recent-workspaces
+          (cons (map-elt workspace 'root)
+                (delete (map-elt workspace 'root) agent-shell-cockpit-recent-workspaces))))
   (let* ((origin (current-buffer))
          (buffer (agent-shell-cockpit-workspace-view-buffer workspace))
          (return-buffer
@@ -565,8 +597,8 @@ CONTEXTS is the list of context files to render."
            ((with-current-buffer origin
               (derived-mode-p 'agent-shell-cockpit-ui-mode))
             origin)
-           ((buffer-live-p agent-shell-cockpit--buffer)
-            agent-shell-cockpit--buffer)
+           ((buffer-live-p agent-shell-cockpit-agents-view--buffer)
+            agent-shell-cockpit-agents-view--buffer)
            ((with-current-buffer origin
               (not (derived-mode-p 'agent-shell-mode)))
             origin))))
@@ -635,14 +667,17 @@ CONTEXTS is the list of context files to render."
   (interactive)
   (let* ((workspace (agent-shell-cockpit-workspace-view--workspace))
          (operation (map-nested-elt workspace '(operation type))))
-    (unless (or operation (equal (map-elt workspace 'state) "archived"))
+    (unless (or operation (equal (map-elt workspace 'state) "archived")
+                (seq-some (lambda (entry) (map-elt entry 'restoreError)) (map-elt workspace 'worktrees)))
       (user-error "No interrupted operation to recover"))
-    (when (yes-or-no-p (format "Continue %s for %s? " (or operation "restore") (map-elt workspace 'title)))
+    (when (or (equal operation "archive")
+              (yes-or-no-p (format "Continue %s for %s? " (or operation "restore") (map-elt workspace 'title))))
       (let ((result (if (equal operation "archive")
-                        (agent-shell-cockpit-workspace-archive workspace)
+                        (agent-shell-cockpit-workspace-archive-confirm workspace)
                       (agent-shell-cockpit-workspace-restore workspace))))
-        (kill-buffer (current-buffer))
-        (agent-shell-cockpit-workspace-view result)))))
+        (when result
+          (kill-buffer (current-buffer))
+          (agent-shell-cockpit-workspace-view result))))))
 
 (defun agent-shell-cockpit-workspace-view--after-move (source destination)
   "Follow a workspace move from SOURCE to DESTINATION in every detail view."

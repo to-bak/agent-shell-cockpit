@@ -82,8 +82,8 @@
           (when directory (setq default-directory (file-name-as-directory directory))))))
     (run-hook-with-args 'agent-shell-cockpit-workspace-move-hook source destination)))
 
-(defun agent-shell-cockpit-workspace--archive-preflight (workspace)
-  "Signal when WORKSPACE cannot be archived without losing work."
+(defun agent-shell-cockpit-workspace--archive-preflight (workspace &optional force)
+  "Validate WORKSPACE for archiving, allowing local file loss with FORCE."
   (unless (equal (map-elt workspace 'state) "active")
     (user-error "Workspace is not active"))
   (when (agent-shell-cockpit-session-buffers-in-directory (map-elt workspace 'root))
@@ -91,7 +91,8 @@
   (agent-shell-cockpit-lifecycle--paths workspace)
   (agent-shell-cockpit-lifecycle--check-buffers (map-elt workspace 'root))
   (dolist (repository (agent-shell-cockpit-workspace-active-worktrees workspace))
-    (unless (equal (map-elt repository 'removed) "yes")
+    (unless (and (equal (map-elt repository 'removed) "yes")
+                 (not (file-exists-p (agent-shell-cockpit-workspace-repository-path workspace repository))))
       (let ((path (agent-shell-cockpit-workspace-repository-path workspace repository)))
         (if (and (map-elt repository 'retention) (not (file-exists-p path))
                  (equal (map-nested-elt workspace '(operation type)) "archive"))
@@ -99,7 +100,26 @@
                            (agent-shell-cockpit-git--run (map-elt repository 'source)
                                                          "rev-parse" "--verify" (map-elt repository 'retention)))
               (user-error "Retained commit is unavailable; inspect archive manifest"))
-          (agent-shell-cockpit-git-check-removal workspace repository))))))
+          (agent-shell-cockpit-git-check-removal workspace repository force))))))
+
+(defun agent-shell-cockpit-workspace-archive-confirm (workspace)
+  "Confirm archive of WORKSPACE, including all destructive consequences."
+  (setq workspace (agent-shell-cockpit-store-read (map-elt workspace 'root)))
+  (unless (and (equal (map-elt workspace 'state) "archived")
+               (equal (map-nested-elt workspace '(operation type)) "archive"))
+    (agent-shell-cockpit-workspace--archive-preflight workspace t))
+  (let (warnings)
+    (dolist (repository (agent-shell-cockpit-workspace-active-worktrees workspace))
+      (let ((path (agent-shell-cockpit-workspace-repository-path workspace repository)))
+        (when (file-exists-p path)
+          (dolist (warning (agent-shell-cockpit-git-removal-warnings path))
+            (push (format "%s: %s" (map-elt repository 'name) warning) warnings)))))
+    (when (yes-or-no-p
+           (concat (format "Archive %s and remove its worktrees? Commits will be retained."
+                           (map-elt workspace 'title))
+                   (when warnings (concat "\n" (string-join (nreverse warnings) "\n")))
+                   "\nProceed? "))
+      (agent-shell-cockpit-workspace-archive workspace (and warnings t)))))
 
 (defun agent-shell-cockpit-lifecycle--claim (workspace type destination)
   "Claim WORKSPACE's lifecycle operation TYPE with DESTINATION."
@@ -118,8 +138,9 @@
        (unless operation
          (when (equal type "archive")
            (dolist (repository (map-elt fresh 'worktrees))
-             (agent-shell-cockpit-store-set repository 'retention nil)
-             (agent-shell-cockpit-store-set repository 'removed nil))))
+             (when (file-exists-p (agent-shell-cockpit-workspace-repository-path fresh repository))
+               (agent-shell-cockpit-store-set repository 'retention nil)
+               (agent-shell-cockpit-store-set repository 'removed nil)))))
        (agent-shell-cockpit-store-set fresh 'operation
                                       `((type . ,type) (destination . ,destination)
                                         (pid . ,(emacs-pid)) (host . ,(system-name))))))
@@ -131,8 +152,9 @@
                  (file-attribute-device-number (file-attributes destination)))
     (user-error "Cross-filesystem lifecycle operations are unsupported; choose a local archive")))
 
-(defun agent-shell-cockpit-workspace-archive (workspace)
-  "Archive WORKSPACE, retaining commits and recording recoverable progress."
+(defun agent-shell-cockpit-workspace-archive (workspace &optional force)
+  "Archive WORKSPACE, retaining commits and recording recoverable progress.
+FORCE permits deleting local files and locked worktrees after caller consent."
   (when agent-shell-cockpit-lifecycle--running (user-error "Lifecycle operation already running"))
   (let* ((agent-shell-cockpit-lifecycle--running t)
          (root (map-elt workspace 'root))
@@ -149,7 +171,7 @@
            root (lambda (fresh)
                   (agent-shell-cockpit-store-set fresh 'operation nil)
                   (agent-shell-cockpit-store-set fresh 'archivedAt (floor (float-time)))) t))
-      (agent-shell-cockpit-workspace--archive-preflight workspace)
+      (agent-shell-cockpit-workspace--archive-preflight workspace force)
       (make-directory archive-root t)
       (unless (and (file-writable-p archive-root)
                    (file-equal-p (file-name-directory (directory-file-name destination)) archive-root)
@@ -174,11 +196,13 @@
           (let ((path (agent-shell-cockpit-workspace-repository-path workspace repository)))
             ;; A crash can happen between successful Git removal and journaling it.
             (when (file-exists-p path)
-              (agent-shell-cockpit-git-check-removal workspace repository)
+              (agent-shell-cockpit-git-check-removal workspace repository force)
               (unless (equal (map-elt repository 'head)
                              (agent-shell-cockpit-git--run path "rev-parse" "HEAD"))
                 (user-error "Repository HEAD changed during archive; inspect before retrying"))
-              (agent-shell-cockpit-git--run (map-elt repository 'source) "worktree" "remove" path))
+              (apply #'agent-shell-cockpit-git--run (map-elt repository 'source)
+                     "worktree" "remove"
+                     (append (when force '("--force" "--force")) (list path))))
             (setq workspace
                   (agent-shell-cockpit-store-update
                    root (lambda (fresh)
@@ -212,7 +236,8 @@
 
 (defun agent-shell-cockpit-workspace-restore (workspace &optional name)
   "Restore archived WORKSPACE under NAME, defaulting to its logical name.
-Recreate exact retained commits detached so occupied or moved branches are safe."
+Reuse unchanged branches, otherwise recover detached at the saved commit.
+Unavailable repositories remain recorded for a later recovery attempt."
   (when agent-shell-cockpit-lifecycle--running (user-error "Lifecycle operation already running"))
   (let* ((agent-shell-cockpit-lifecycle--running t)
          (workspace (agent-shell-cockpit-store-read (map-elt workspace 'root)))
@@ -222,6 +247,8 @@ Recreate exact retained commits detached so occupied or moved branches are safe.
                           (expand-file-name (agent-shell-cockpit-workspace--validate-name name)
                                             agent-shell-cockpit-workspace-directory))))
     (unless (or (equal (map-elt workspace 'state) "archived")
+                (seq-some (lambda (entry) (map-elt entry 'restoreError))
+                          (map-elt workspace 'worktrees))
                 (equal (map-nested-elt workspace '(operation type)) "restore"))
       (user-error "Workspace is not archived"))
     (agent-shell-cockpit-lifecycle--paths workspace)
@@ -230,11 +257,6 @@ Recreate exact retained commits detached so occupied or moved branches are safe.
     (unless (file-equal-p (file-name-directory (directory-file-name destination))
                           agent-shell-cockpit-workspace-directory)
       (user-error "Restore destination must be a direct workspace child"))
-    (dolist (repository (map-elt workspace 'worktrees))
-      (let ((source (map-elt repository 'source)) (head (map-elt repository 'head)))
-        (unless (and source head (file-directory-p source))
-          (user-error "Repository source unavailable: %s" (map-elt repository 'name)))
-        (agent-shell-cockpit-git--run source "cat-file" "-e" (concat head "^{commit}"))))
     (unless (equal (file-name-as-directory destination) (file-name-as-directory root))
       (when (or (file-exists-p destination) (file-symlink-p destination)) (user-error "Workspace destination exists: %s" destination))
       (agent-shell-cockpit-lifecycle--same-device root agent-shell-cockpit-workspace-directory))
@@ -244,22 +266,47 @@ Recreate exact retained commits detached so occupied or moved branches are safe.
     (setq root destination workspace (agent-shell-cockpit-store-read destination))
     (agent-shell-cockpit-lifecycle--paths workspace)
     (dolist (repository (map-elt workspace 'worktrees))
-      (let ((path (agent-shell-cockpit-workspace-repository-path workspace repository)))
-        (if (file-exists-p path)
-            (unless (and (file-regular-p (expand-file-name ".git" path))
-                         (equal (agent-shell-cockpit-git-common-directory path) (map-elt repository 'source))
-                         (equal (agent-shell-cockpit-git--run path "rev-parse" "HEAD") (map-elt repository 'head)))
-              (user-error "Restore found a conflicting path: %s" path))
-          (agent-shell-cockpit-git--run (map-elt repository 'source)
-                                        "worktree" "add" "--detach" path (map-elt repository 'head)))))
-    (dolist (repository (map-elt workspace 'worktrees))
-      (agent-shell-cockpit-lifecycle-restore-files workspace repository))
+      (unless (and (equal (map-elt workspace 'state) "active")
+                   (not (map-elt repository 'removed))
+                   (not (map-elt repository 'restoreError)))
+        (condition-case err
+            (progn
+              (agent-shell-cockpit-lifecycle--restore-worktree workspace repository)
+              (agent-shell-cockpit-lifecycle-restore-files workspace repository)
+              (agent-shell-cockpit-store-set repository 'removed nil)
+              (agent-shell-cockpit-store-set repository 'restoreError nil))
+          (error
+           (agent-shell-cockpit-store-set repository 'restoreError (error-message-string err))
+           (message "Could not restore %s: %s" (map-elt repository 'name)
+                    (error-message-string err))))))
     (agent-shell-cockpit-store-update
      root (lambda (fresh)
-            (dolist (repository (map-elt fresh 'worktrees))
-              (agent-shell-cockpit-store-set repository 'removed nil))
+            (agent-shell-cockpit-store-set fresh 'worktrees (map-elt workspace 'worktrees))
             (agent-shell-cockpit-store-set fresh 'operation nil)
             (agent-shell-cockpit-store-set fresh 'archivedAt nil)) t)))
+
+(defun agent-shell-cockpit-lifecycle--restore-worktree (workspace repository)
+  "Recover REPOSITORY in WORKSPACE without moving a changed branch."
+  (let ((path (agent-shell-cockpit-workspace-repository-path workspace repository))
+        (source (map-elt repository 'source))
+        (head (map-elt repository 'head))
+        (branch (map-elt repository 'branch)))
+    (unless (and source head (file-directory-p source))
+      (user-error "Repository source unavailable: %s" source))
+    (agent-shell-cockpit-git--run source "cat-file" "-e" (concat head "^{commit}"))
+    (if (file-exists-p path)
+        (unless (and (file-regular-p (expand-file-name ".git" path))
+                     (equal (agent-shell-cockpit-git-common-directory path) source)
+                     (equal (agent-shell-cockpit-git--run path "rev-parse" "HEAD") head))
+          (user-error "Restore found a conflicting path: %s" path))
+      (unless
+          (and branch (not (string-empty-p branch))
+               (condition-case nil
+                   (and (equal head (agent-shell-cockpit-git--run
+                                     source "rev-parse" "--verify" (concat "refs/heads/" branch)))
+                        (progn (agent-shell-cockpit-git--run source "worktree" "add" path branch) t))
+                 (error nil)))
+        (agent-shell-cockpit-git--run source "worktree" "add" "--detach" path head)))))
 
 (defun agent-shell-cockpit-lifecycle-preserve (workspace repository files)
   "Move selected local FILES from REPOSITORY into WORKSPACE storage."

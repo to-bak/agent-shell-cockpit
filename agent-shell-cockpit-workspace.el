@@ -187,6 +187,7 @@ Session metadata remains available only in the timestamped backup."
 
 (autoload 'agent-shell-cockpit-workspace--archive-preflight "agent-shell-cockpit-lifecycle")
 (autoload 'agent-shell-cockpit-workspace-archive "agent-shell-cockpit-lifecycle")
+(autoload 'agent-shell-cockpit-workspace-archive-confirm "agent-shell-cockpit-lifecycle")
 (autoload 'agent-shell-cockpit-workspace-restore "agent-shell-cockpit-lifecycle")
 
 (autoload 'agent-shell-cockpit-workspace-delete-archive "agent-shell-cockpit-lifecycle")

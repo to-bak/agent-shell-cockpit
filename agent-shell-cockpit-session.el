@@ -27,7 +27,7 @@
 (declare-function agent-shell-unsubscribe "agent-shell")
 (declare-function agent-shell-buffers "agent-shell")
 (declare-function agent-shell-status "agent-shell")
-(declare-function agent-shell-cockpit "agent-shell-cockpit-dashboard")
+(declare-function agent-shell-cockpit "agent-shell-cockpit")
 (declare-function agent-shell-cockpit-workspace-view
                   "agent-shell-cockpit-workspace-view")
 (declare-function agent-shell-cockpit-agent-preview-close
@@ -36,7 +36,7 @@
 (defvar agent-shell-context-sources)
 (defvar agent-shell-cwd-function)
 (defvar agent-shell-session-strategy)
-(defvar agent-shell-cockpit--buffer)
+(defvar agent-shell-cockpit-agents-view--buffer)
 
 (defvar-local agent-shell-cockpit-session-workspace-root nil
   "Canonical root of the cockpit workspace associated with this agent buffer.")
@@ -78,8 +78,8 @@
    ((agent-shell-cockpit-session-workspace (current-buffer))
     (agent-shell-cockpit-workspace-view
      (agent-shell-cockpit-session-workspace (current-buffer))))
-   ((buffer-live-p agent-shell-cockpit--buffer)
-    (switch-to-buffer agent-shell-cockpit--buffer))
+   ((buffer-live-p agent-shell-cockpit-agents-view--buffer)
+    (switch-to-buffer agent-shell-cockpit-agents-view--buffer))
    (t (agent-shell-cockpit))))
 
 
@@ -200,6 +200,9 @@
           (agent-shell-cockpit-session--upsert-current)
         (error (message "Cockpit could not save session: %s" (error-message-string err)))))))
 
+(defvar-local agent-shell-cockpit-session-selected-worktrees nil
+  "Workspace worktree names assigned to this session.")
+
 (defun agent-shell-cockpit-session--upsert-current ()
   "Persist the current buffer's session using a fresh metadata transaction."
   (when-let* ((root agent-shell-cockpit-session-workspace-root)
@@ -211,6 +214,7 @@
           (cwd (file-relative-name default-directory root)))
       (agent-shell-cockpit-session--check-owner `((root . ,root)))
       (let ((snapshot (list agent-id session-id title settings cwd
+                            agent-shell-cockpit-session-selected-worktrees
                             agent-shell-cockpit-session--restoring-settings)))
         (unless (equal snapshot agent-shell-cockpit-session--saved-state)
           (agent-shell-cockpit-store-update
@@ -229,6 +233,8 @@
                  (agent-shell-cockpit-store-set workspace 'sessions
                                                 (append sessions (list existing))))
                (agent-shell-cockpit-store-set existing 'title title)
+               (agent-shell-cockpit-store-set existing 'selectedWorktrees
+                                              agent-shell-cockpit-session-selected-worktrees)
                (unless agent-shell-cockpit-session--restoring-settings
                  (agent-shell-cockpit-store-set existing 'settings settings))
                (agent-shell-cockpit-store-set existing 'cwd cwd))))
@@ -389,6 +395,8 @@ displayed history, not the agent's remembered conversation."
                              config (map-elt session 'settings))
                     :session-id (map-elt session 'sessionId))))
       (with-current-buffer buffer
+        (setq agent-shell-cockpit-session-selected-worktrees
+              (map-elt session 'selectedWorktrees))
         (setq agent-shell-cockpit-session--restoring-settings
               (and (map-elt session 'settings)
                    (not (agent-shell-cockpit-agent-shell-state-value '(:set-config-options))))))
@@ -450,6 +458,7 @@ displayed history, not the agent's remembered conversation."
         (workspace (agent-shell-cockpit-session-workspace buffer))
         (origin (buffer-local-value 'agent-shell-cockpit-session-return-buffer buffer))
         (standalone (buffer-local-value 'agent-shell-cockpit-session-standalone-p buffer))
+        (selection (buffer-local-value 'agent-shell-cockpit-session-selected-worktrees buffer))
         (restart (memq command '(agent-shell-reload agent-shell-fork)))
         settings)
     (when restart
@@ -463,6 +472,7 @@ displayed history, not the agent's remembered conversation."
         (with-current-buffer buffer (call-interactively command))
       (dolist (new (seq-difference (agent-shell-buffers) before))
         (with-current-buffer new
+          (setq agent-shell-cockpit-session-selected-worktrees selection)
           (setq agent-shell-cockpit-session--restoring-settings
                 (and restart settings
                      (not (agent-shell-cockpit-agent-shell-state-value '(:set-config-options))))))

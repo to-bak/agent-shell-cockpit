@@ -21,8 +21,8 @@
 (require 'agent-shell-cockpit-workspace)
 (require 'agent-shell-cockpit-lifecycle)
 
-(defvar agent-shell-cockpit--buffer)
-(declare-function agent-shell-cockpit "agent-shell-cockpit-dashboard")
+(declare-function agent-shell-cockpit "agent-shell-cockpit")
+(declare-function agent-shell-cockpit-workspace-dispatch "agent-shell-cockpit-navigation")
 
 (defcustom agent-shell-cockpit-archive-buffer-name "*Cockpit Archives*"
   "Name of the Cockpit archive history buffer."
@@ -175,13 +175,6 @@ stored explicitly."
       (agent-shell-cockpit-archive-view-refresh)
       (message "Deleted archived workspace %s (%s)" name root))))
 
-(defun agent-shell-cockpit-archive-view-back ()
-  "Return to the Cockpit dashboard."
-  (interactive)
-  (if (buffer-live-p agent-shell-cockpit--buffer)
-      (switch-to-buffer agent-shell-cockpit--buffer)
-    (agent-shell-cockpit)))
-
 (defun agent-shell-cockpit-archive-view--workspace-at-point-p ()
   "Return non-nil when point represents an archived workspace."
   (eq (agent-shell-cockpit-ui-object-type-at-point) 'archived-workspace))
@@ -192,7 +185,7 @@ stored explicitly."
 			  [("R" "Restore workspace" agent-shell-cockpit-archive-view-restore)
 			   ("D" "Permanently delete workspace" agent-shell-cockpit-archive-view-delete
 			    :inapt-if-not agent-shell-cockpit-archive-view--workspace-at-point-p)
-			   ("b" "Return to dashboard" agent-shell-cockpit-archive-view-back)]]
+			   ("b" "Workspaces" agent-shell-cockpit-workspace-dispatch)]]
 			 ["Essential commands"
 			  [("r" "Refresh" agent-shell-cockpit-refresh)
 			   ("q" "Return / bury buffer" agent-shell-cockpit-quit)
@@ -218,7 +211,7 @@ stored explicitly."
   :parent agent-shell-cockpit-ui-mode-map
   "D" #'agent-shell-cockpit-archive-view-delete
   "R" #'agent-shell-cockpit-archive-view-restore
-  "b" #'agent-shell-cockpit-archive-view-back)
+  "b" #'agent-shell-cockpit-workspace-dispatch)
 
 (define-derived-mode agent-shell-cockpit-archive-view-mode
   agent-shell-cockpit-ui-mode "Cockpit-Archives"
