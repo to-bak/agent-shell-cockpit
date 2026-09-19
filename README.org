@@ -42,31 +42,33 @@ Use =M-x customize-group RET agent-shell-cockpit= for settings.
 
 * Sample configuration
 #+begin_src emacs-lisp
-  (defun my-cockpit-fullscreen ()
-    "Open Cockpit full-screen, saving the current layout for later restoration."
-    (interactive)
-    (window-configuration-to-register ?c)
-    (delete-other-windows)
-    (agent-shell-cockpit))
-
   (use-package agent-shell-cockpit
     :straight (:type git :host github :repo "to-bak/agent-shell-cockpit")
     :after agent-shell
-    :commands agent-shell-cockpit
-    :bind ("C-c m" . agent-shell-cockpit)
+    :after agent-shell
+    :demand t
+    :bind (("C-c m" . agent-shell-cockpit))
     :custom
+    (agent-shell-cockpit-enable-standalone-sessions t)
     (agent-shell-cockpit-default-instructions '(cockpit))
     (agent-shell-cockpit-agent-preview-behavior 'delayed)
     (agent-shell-cockpit-context-directory-name "context")
     (agent-shell-cockpit-worktrees-directory-name "worktrees")
+
     ;; optional - requires magit
     (agent-shell-cockpit-worktree-open-function #'magit-status)
-    ;; optional - defaults to dired, but can integrate with whicever project framework you are using.
-    (agent-shell-cockpit-repository-source-function #'project-prompt-project-dir)
+    (agent-shell-cockpit-repository-source-function
+
+     ;; optional - defaults to dired, but can integrate with whicever project framework you are using.
+     #'project-prompt-project-dir)
     :config
-    ;; Optional: enable the Org-roam sources shown below.
+    ;; optional - sample reusable instruction using org-roam
     ;; (require 'agent-shell-cockpit-org-roam)
-    )
+    ;; (setq agent-shell-cockpit-instructions
+    ;;    '((manifest
+    ;;       :title "General AI Instructions"
+    ;;       :source (org-roam "a8a767a1-1644-4c4a-a05f-23f7b3eab5bf"))))
+  )
 #+end_src
 
 * Everyday workflow
