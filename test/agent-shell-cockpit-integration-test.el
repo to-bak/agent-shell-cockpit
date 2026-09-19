@@ -129,14 +129,13 @@
       (delete-directory root t))))
 
 
-(ert-deftest cockpit-integration-dashboard-start-is-always-standalone ()
-  (let ((agent-shell-cockpit-dashboard--origin-directory temporary-file-directory)
-        launched)
+(ert-deftest cockpit-integration-standalone-start-uses-chosen-directory ()
+  (let (launched)
     (cl-letf (((symbol-function 'agent-shell-cockpit-agent-launch)
                (lambda (&optional workspace directory)
                  (setq launched (list workspace directory)) 'agent))
-              ((symbol-function 'agent-shell-cockpit-dashboard-selected-workspace)
-               (lambda () (ert-fail "Dashboard launch must not select a workspace"))))
+              ((symbol-function 'read-directory-name)
+               (lambda (&rest _) temporary-file-directory)))
       (agent-shell-cockpit-start-agent)
       (should (equal launched (list nil temporary-file-directory))))))
 
@@ -176,7 +175,7 @@
          (agent-shell-cockpit-refresh-interval nil)
          (workspace (agent-shell-cockpit-workspace-create :name "menu")))
     (unwind-protect
-        (dolist (mode '(agent-shell-cockpit-mode
+        (dolist (mode '(agent-shell-cockpit-agents-view-mode
                         agent-shell-cockpit-workspace-view-mode
                         agent-shell-cockpit-archive-view-mode))
           (with-temp-buffer

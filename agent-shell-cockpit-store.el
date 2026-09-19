@@ -93,6 +93,13 @@ When nil, use a .archive directory below
     (error "Session metadata is not a JSON object"))
   (dolist (key '(agentId sessionId))
     (agent-shell-cockpit-store--required-string session key))
+  (when-let* ((names (map-elt session 'selectedWorktrees)))
+    (unless (and (sequencep names) (not (stringp names))
+                 (seq-every-p (lambda (name)
+                                (and (stringp name)
+                                     (string-match-p "\\`[[:alnum:]][[:alnum:]_.-]*\\'" name))) names))
+      (error "Invalid selected worktrees"))
+    (agent-shell-cockpit-store-set session 'selectedWorktrees (append names nil)))
   (when-let* ((settings (map-elt session 'settings)))
     (unless (and (sequencep settings) (not (stringp settings)))
       (error "Invalid session settings"))
@@ -168,7 +175,7 @@ When nil, use a .archive directory below
             (error "Invalid repository name"))
           (when (member name seen) (error "Duplicate repository name"))
           (push name seen))
-        (dolist (key '(source head branch base retention))
+        (dolist (key '(source head branch base retention restoreError))
           (when (and (map-elt entry key) (not (stringp (map-elt entry key))))
             (error "Invalid repository %s" key)))
         (when-let* ((source (map-elt entry 'source)))
@@ -256,6 +263,8 @@ workspace records are included so the UI can report them."
                       (append
                        (agent-shell-cockpit-store--fields
                         session '(agentId sessionId title cwd displayId))
+                       (when (assq 'selectedWorktrees session)
+                         `((selectedWorktrees . ,(vconcat (map-elt session 'selectedWorktrees)))))
                        (when (assq 'settings session)
                          `((settings . ,(vconcat (map-elt session 'settings)))))))
                     (map-elt record 'sessions)))))
@@ -264,7 +273,7 @@ workspace records are included so the UI can report them."
    `((worktrees . ,(vconcat (mapcar
                              (lambda (entry)
                                (agent-shell-cockpit-store--fields
-                                entry '(name source head branch base retention removed)))
+                                entry '(name source head branch base retention removed restoreError)))
                              (map-elt record 'worktrees)))))))
 
 (defvar agent-shell-cockpit-store--locked-path nil

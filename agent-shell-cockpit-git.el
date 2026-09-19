@@ -229,8 +229,6 @@ existing branch as appropriate."
           (when (seq-some (lambda (entry) (equal (map-elt entry 'name) name))
                           (map-elt workspace 'worktrees))
             (user-error "Worktree name is already recorded; recover its removal first"))
-          (when (agent-shell-cockpit-git--source-already-attached-p workspace source)
-            (user-error "Repository is already attached to this workspace"))
           (unless (and (stringp name)
                        (string-match-p "\\`[[:alnum:]][[:alnum:]_.-]*\\'" name))
             (user-error "Invalid worktree name: %s" name))
@@ -278,8 +276,24 @@ existing branch as appropriate."
     (head . ,(agent-shell-cockpit-git--run path "rev-parse" "HEAD"))
     (branch . ,(agent-shell-cockpit-git--run path "branch" "--show-current"))))
 
-(defun agent-shell-cockpit-git-check-removal (workspace repository)
-  "Check that REPOSITORY in WORKSPACE can be removed without losing files."
+(defun agent-shell-cockpit-git-removal-warnings (path)
+  "Return overridable removal warnings for the worktree at PATH."
+  (delq nil
+        (list
+         (unless (agent-shell-cockpit-git-clean-p path)
+           "modified, untracked or ignored files will be deleted")
+         (when (file-exists-p
+                (expand-file-name "locked"
+                                  (expand-file-name
+                                   (agent-shell-cockpit-git--run path "rev-parse" "--git-dir") path)))
+           "worktree is locked")
+         (when (file-exists-p (expand-file-name ".gitmodules" path))
+           "submodule contents will be deleted; nested history is not retained"))))
+
+(defun agent-shell-cockpit-git-check-removal (workspace repository &optional force)
+  "Check removal of REPOSITORY in WORKSPACE.
+FORCE permits discarding local files and removing locked worktrees.  It never
+bypasses path validation, unsaved buffers, or running agents."
   (let ((path (agent-shell-cockpit-workspace-repository-path workspace repository)))
     (unless (and (file-directory-p path)
                  (not (file-symlink-p path))
@@ -295,14 +309,9 @@ existing branch as appropriate."
                (not (equal (agent-shell-cockpit-git-common-directory path)
                            (map-elt repository 'source))))
       (user-error "Worktree source changed; inspect before removal"))
-    (unless (agent-shell-cockpit-git-clean-p path)
-      (user-error "Worktree has changed, untracked or ignored files: %s" path))
-    (when (file-exists-p
-           (expand-file-name "locked"
-                             (expand-file-name (agent-shell-cockpit-git--run path "rev-parse" "--git-dir") path)))
-      (user-error "Worktree is locked: %s" path))
-    (when (file-exists-p (expand-file-name ".gitmodules" path))
-      (user-error "Remove submodule worktrees through Git before archiving: %s" path))
+    (unless force
+      (when-let* ((warnings (agent-shell-cockpit-git-removal-warnings path)))
+        (user-error "%s: %s" path (string-join warnings "; "))))
     (dolist (buffer (buffer-list))
       (with-current-buffer buffer
         (when (and buffer-file-name (buffer-modified-p)

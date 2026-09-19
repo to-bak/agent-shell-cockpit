@@ -71,17 +71,46 @@ Use =M-x customize-group RET agent-shell-cockpit= for settings.
 
 * Everyday workflow
 
-1. Open =M-x agent-shell-cockpit=. Press =?= in any view to obtain a list of keybindings.
-2. Create a new workspace with =w=.
-3. Inside the workspace, add relevant git worktrees and context.
-4. Press =s= to start an agent shell; you will be prompted to toggle reusable instructions (see below) before proceeding.
-5. Your agent shell is now running; and can be previewed from the main dashboards.
-6. Interact with a running agent from the main dashboard, by pressing =a=. This allow you to approve, reject agent prompts etc.
+1. Open =M-x agent-shell-cockpit=. It opens the current buffer's workspace,
+   a workspace containing its directory, or the most recently visited workspace.
+   Otherwise it offers the workspace picker (or creation for an empty collection).
+2. Press =b b= to switch directly between flat workspaces; =w= or =b c= creates one.
+   Recent workspaces come first. Enable =savehist-mode= to retain this order
+   between Emacs sessions. Existing buffers keep their workspace association.
+3. Add worktrees with =+= and context with =c=. =RET= on a worktree uses
+   =agent-shell-cockpit-worktree-open-function=; keep it set to =magit-status=
+   for the Magit workflow. Multiple branches of one repository are supported.
+4. Press =s= to prepare an agent. In the launch checklist, =SPC= toggles worktrees
+   or instructions, =M-k= / =M-j= (also =M-<up>= / =M-<down>=) reorder instructions,
+   and =a= adds a file reference. Workspace context files are included and selected
+   automatically; toggle off any you do not need. =RET= visits the source, =p= previews
+   the assembled message, and =s= opens the native agent-shell launch flow.
+5. The top =Other agents= section starts collapsed and summarizes agents
+   outside the current workspace, including standalone agents. Its heading
+   shows only the attention count, shaded red when nonzero. =TAB= expands it, with attention first
+   and workspace labels on each row. =a= offers agent actions, =RET= visits an
+   agent, =o= opens its workspace, and returning from an agent brings you back
+   to this workspace. Refresh keeps your choice to expand or collapse the section.
+   The current workspace's agents appear only in its own =Agents= section.
+   The separate all-agents view remains available through =b a=; there is no =W= binding.
+6. From a workspace, =l= browses archives and =A= archives the current workspace.
+   =E= selects invalid workspace metadata to repair. The shared =b= menu also
+   offers archives (=b l=), metadata inspection (=b i=), repair (=b E=), standalone
+   agent launch (=b s=), and attaching an unassigned agent (=b +=).
+   Press =?= for each view's Transient. There is no separate workspace-list view.
+
+The selected worktrees are included as explicit scope in the initial message
+and recorded with the session. This is guidance, not access isolation. Agents
+still start at the workspace root and can work across several selected checkouts.
+Expand an agent row to see its assigned worktrees. Each launch starts from scratch:
+declarative instruction defaults, the current workspace's context files, and its
+available worktrees. Previous toggles, extra files, and ordering are discarded.
+Refreshing an open checklist preserves edits for that prompt; =q= returns without launching.
 
 * Declarative reusable instructions
 
 Declare the catalog in Emacs configuration. Each instruction has a stable ID,
-a title, and a source. Only literals and references are supported:
+a title, and a source: literal text, a skill invocation, or a reference:
 
 #+begin_src emacs-lisp
 (setq agent-shell-cockpit-instructions
@@ -89,11 +118,23 @@ a title, and a source. Only literals and references are supported:
                  :source (literal "Keep your final response concise."))
         (review :title "Code review"
                 :source (file "~/instructions/review.md"))
+        (brief :title "Workspace brief"
+               :source (file "context/prompt.org"))
+        (design :title "Design skill"
+                :source (skill "design-review"))
         (manifest :title "AI Manifest"
                   :source (org-roam "f7315811-28de-49e2-baba-a109c0eaa6ba"))))
 
-(setq agent-shell-cockpit-default-instructions '(cockpit))
+(setq agent-shell-cockpit-default-instructions '(cockpit brief design concise))
 #+end_src
+
+Defaults specify both initial selection and order. Remaining catalog entries
+appear unchecked after them. File paths may be workspace-relative; absolute
+paths also work for standalone agents. A =skill= entry emits an explicit request
+to use the named skill; the agent must have that skill available. File and Org
+entries remain references, so their contents are not copied into the message.
+Adapter bootstraps form a shared preamble; the selected items follow in checklist
+order. Inspection and preview never start an agent.
 
 NOTE: the org-roam instruction adapter is included in the plugin, but disabled by default.
 To enable:
@@ -128,6 +169,33 @@ workspace/
   context/                 User-owned context and prompts
   .agent-shell-cockpit/     Cockpit-owned workspace metadata
 #+end_example
+
+Worktrees created outside Cockpit also appear when placed inside the workspace's
+worktree directory. Paths outside that directory are not attached automatically.
+Metadata records worktree recovery information and per-session selections.
+
+* Archiving and recovery
+
+=A= removes the workspace's worktrees and moves the remaining workspace into the
+archive directory. A single confirmation lists dirty, untracked, ignored, locked,
+and submodule warnings. Confirming authorizes deletion of local checkout files;
+uncommitted changes are not automatically saved. =P= can preserve selected local
+untracked or ignored files before archiving.
+
+Each checkout's source repository, branch, and exact commit are recorded before
+removal. Cockpit retains commits under =refs/cockpit/= in the source repository,
+so unpushed commits and later branch deletion do not prevent recovery. These refs
+are local, not backups; deleting the source repository also deletes that history.
+Git worktree removal clears the corresponding registration without pruning
+unrelated worktrees. Unsaved Emacs buffers, running agents, unsafe paths, and
+actual filesystem/Git failures still require attention.
+
+Restoring reuses the original branch when it is unchanged and available.
+Otherwise it recreates the exact saved commit detached. Missing repositories
+are shown as unresolved while the rest of the workspace is restored; press =R=
+in the workspace to retry after making the source available. Cockpit never
+rewinds an existing branch. Interrupted archive operations can also be retried
+with =R=; destructive consent is requested again.
 
 * Development and release checks
 #+begin_src sh

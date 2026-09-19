@@ -22,6 +22,7 @@ test:
 	  -l agent-shell-cockpit-session-ui-test \
 	  -l agent-shell-cockpit-regression-test \
 	  -l agent-shell-cockpit-lifecycle-test \
+	  -l agent-shell-cockpit-design-test \
 	  -f ert-run-tests-batch-and-exit
 
 integration:
