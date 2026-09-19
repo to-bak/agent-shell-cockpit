@@ -100,14 +100,6 @@ a title, and a source: literal text, a skill invocation, or a reference:
 (setq agent-shell-cockpit-default-instructions '(cockpit brief design concise))
 #+end_src
 
-Defaults specify both initial selection and order. Remaining catalog entries
-appear unchecked after them. File paths may be workspace-relative; absolute
-paths also work for standalone agents. A =skill= entry emits an explicit request
-to use the named skill; the agent must have that skill available. File and Org
-entries remain references, so their contents are not copied into the message.
-Adapter bootstraps form a shared preamble; the selected items follow in checklist
-order. Inspection and preview never start an agent.
-
 NOTE: the org-roam instruction adapter is included in the plugin, but disabled by default.
 To enable:
 #+begin_src emacs-lisp
